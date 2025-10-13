@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LSR Tracker</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <div id="root" class="max-w-3xl mx-auto p-4"></div>
+
+  <script type="text/babel">
+    const formatHHMMSS = (hoursDec) => {
+      const totalSeconds = Math.max(0, Math.round((Number(hoursDec) || 0) * 3600));
+      const hh = Math.floor(totalSeconds / 3600);
+      const mm = Math.floor((totalSeconds % 3600) / 60);
+      const ss = totalSeconds % 60;
+      const hhStr = String(hh).padStart(2, '0');
+      const mmStr = String(mm).padStart(2, '0');
+      const ssStr = String(ss).padStart(2, '0');
+      return `${hhStr}:${mmStr}:${ssStr}`;
+    };
+    const formatPaceMMSS = (hoursPerKm) => {
+      if (hoursPerKm == null || !isFinite(hoursPerKm) || hoursPerKm <= 0) return '';
+      const totalSeconds = Math.max(0, Math.round(Number(hoursPerKm) * 3600));
+      const mm = Math.floor(totalSeconds / 60);
+      const ss = totalSeconds % 60;
+      return `${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+    };
+    const api = async (path, options = {}) => {
+      const res = await fetch(path, {
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+        ...options
+      });
+      return res.json();
+    };
+
+    function useMe() {
+      const [me, setMe] = React.useState(null);
+      const [loading, setLoading] = React.useState(true);
+      React.useEffect(() => {
+        api('/api/me').then(d => { setMe(d.user); setLoading(false); });
+      }, []);
+      return { me, setMe, loading };
+    }
+
+    function AuthForms({ onAuthed }) {
+      const [isLogin, setIsLogin] = React.useState(true);
+      const [email, setEmail] = React.useState('');
+      const [password, setPassword] = React.useState('');
+      const [error, setError] = React.useState('');
+
+      const submit = async (e) => {
+        e.preventDefault();
+        setError('');
+        const path = isLogin ? '/api/login' : '/api/register';
+        const res = await api(path, { method: 'POST', body: JSON.stringify({ email, password }) });
+        if (res.ok) onAuthed(); else setError(res.error || 'Error');
+      };
+
+      return (
+        <div className="max-w-md mx-auto mt-12 bg-white p-6 rounded shadow">
+          <h1 className="text-2xl font-semibold mb-4 text-center">{isLogin ? 'Login' : 'Register'}</h1>
+          {error && <div className="text-red-600 mb-2">{error}</div>}
+          <form onSubmit={submit} className="space-y-3">
+            <input className="w-full border rounded p-2" placeholder="Name" value={email} onChange={e => setEmail(e.target.value)} required />
+            <input type="password" className="w-full border rounded p-2" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required />
+            <button className="w-full bg-blue-600 text-white rounded p-2">{isLogin ? 'Login' : 'Create Account'}</button>
+          </form>
+          <button className="w-full mt-3 text-sm text-blue-700" onClick={() => setIsLogin(v => !v)}>
+            {isLogin ? 'Need an account? Register' : 'Have an account? Login'}
+          </button>
+        </div>
+      );
+    }
+
+    function AdminPanel() {
+      const [users, setUsers] = React.useState([]);
+      const [entries, setEntries] = React.useState([]);
+      const [uploads, setUploads] = React.useState([]);
+      const [selectedUserId, setSelectedUserId] = React.useState('');
+      const [userPage, setUserPage] = React.useState(1);
+      const pageSize = 9;
+      const [dateAsc, setDateAsc] = React.useState(false);
+      const [pivotExpanded, setPivotExpanded] = React.useState(false);
+      const loadAll = React.useCallback(() => {
+        Promise.all([
+          api('/api/admin/users').then(d => d.users || []),
+          api('/api/admin/entries').then(d => d.entries || [])
+        ]).then(([u, e]) => { setUsers(u); setEntries(e); setUserPage(1); });
+      }, []);
+      React.useEffect(() => { loadAll(); }, [loadAll]);
+
+      const deleteUser = async (id) => {
+        const u = users.find(x => x.id === id);
+        if (!u) return;
+        if (!confirm(`Delete user ${u.email}? This also removes their entries.`)) return;
+        const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE', credentials: 'include' });
+        const json = await res.json();
+        if (json.ok) loadAll();
+      };
+
+      const loadUploads = React.useCallback(() => {
+        const qs = selectedUserId ? `?user_id=${encodeURIComponent(selectedUserId)}` : '';
+        api(`/api/admin/uploads${qs}`).then(d => setUploads(d.uploads || []));
+      }, [selectedUserId]);
+      React.useEffect(() => { loadUploads(); }, [loadUploads]);
+
+      const userIds = React.useMemo(() => users.map(u => u.id), [users]);
+      const totalUserPages = React.useMemo(() => Math.max(1, Math.ceil(users.length / pageSize)), [users.length]);
+      const usersPage = React.useMemo(() => {
+        const start = (userPage - 1) * pageSize;
+        return users.slice(start, start + pageSize);
+      }, [users, userPage]);
+      const userById = React.useMemo(() => Object.fromEntries(users.map(u => [u.id, u])), [users]);
+      const latestImageByUserId = React.useMemo(() => {
+        const map = {};
+        for (const up of uploads) {
+          if (!String(up.mimetype).startsWith('image/')) continue;
+          const uid = up.user_id;
+          if (!map[uid]) map[uid] = up;
+        }
+        return map;
+      }, [uploads]);
+      const byDate = React.useMemo(() => {
+        const map = new Map();
+        for (const e of entries) {
+          if (!map.has(e.date)) map.set(e.date, {});
+          map.get(e.date)[e.user_id] = e;
+        }
+        return map;
+      }, [entries]);
+      const dates = React.useMemo(() => {
+        const arr = Array.from(byDate.keys());
+        return arr.sort((a,b) => dateAsc ? a.localeCompare(b) : b.localeCompare(a));
+      }, [byDate, dateAsc]);
+
+      const totals = React.useMemo(() => {
+        const t = {};
+        for (const uid of userIds) t[uid] = { km: 0, hours: 0 };
+        for (const e of entries) {
+          if (!t[e.user_id]) t[e.user_id] = { km: 0, hours: 0 };
+          t[e.user_id].km += Number(e.km) || 0;
+          t[e.user_id].hours += Number(e.hours) || 0;
+        }
+        return t;
+      }, [entries, userIds]);
+
+      return (
+        <div className="space-y-6">
+          <div className="bg-white p-4 rounded shadow">
+            <h3 className="font-medium mb-3">Top 10 by km (per month)</h3>
+            <Top10Monthly />
+          </div>
+
+          <div className="bg-white p-4 rounded shadow">
+            <h3 className="font-medium mb-2">Users</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {usersPage.map(u => {
+                const t = totals[u.id] || { km: 0, hours: 0 };
+                const pace = t.km > 0 ? formatPaceMMSS((t.hours || 0) / t.km) : '';
+                const up = latestImageByUserId[u.id];
+                return (
+                  <div key={u.id} className="border rounded p-3">
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="min-w-0">
+                        <div className="font-semibold truncate" title={u.email}>{u.email}</div>
+                        <div className="text-xs text-gray-500">ID: {u.id}</div>
+                      </div>
+                      <button className="text-xs bg-red-600 text-white px-2 py-1 rounded" onClick={() => deleteUser(u.id)}>Delete</button>
+                    </div>
+                    <div className="text-xs text-gray-600">Joined: {u.created_at}</div>
+                    <div className="text-sm mt-1">Total distance: {Number(t.km || 0).toFixed(2)} km</div>
+                  </div>
+                );
+              })}
+              {users.length === 0 && <div className="text-gray-500">No users.</div>}
+            </div>
+            {users.length > 0 && (
+              <div className="flex items-center justify-center gap-3 mt-4">
+                <button className="px-3 py-1 border rounded disabled:opacity-50" onClick={() => setUserPage(p => Math.max(1, p - 1))} disabled={userPage <= 1}>Previous</button>
+                <span className="text-sm">Page {userPage} of {totalUserPages}</span>
+                <button className="px-3 py-1 border rounded disabled:opacity-50" onClick={() => setUserPage(p => Math.min(totalUserPages, p + 1))} disabled={userPage >= totalUserPages}>Next</button>
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white p-4 rounded shadow">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-medium">Entries (pivoted: one column per user)</h3>
+              <button className="text-xs border px-2 py-1 rounded" onClick={() => setDateAsc(v => !v)}>
+                Sort: {dateAsc ? 'Oldest first' : 'Newest first'}
+              </button>
+            </div>
+            <div className="overflow-auto">
+              <table className="min-w-full text-sm border">
+                <thead className="bg-gray-100">
+                  <tr>
+                    <th className="border px-2 py-1 text-left sticky left-0 bg-gray-100">Date</th>
+                    {userIds.map(uid => (
+                      <th key={uid} className="border px-2 py-1 text-left min-w-[160px]">
+                        <span className="truncate" title={userById[uid]?.email || ('User ' + uid)}>{userById[uid]?.email || ('User ' + uid)}</span>
+                      </th>
+                    ))}
+                  </tr>
+                  <tr>
+                    <th className="border px-2 py-1 text-left sticky left-0 bg-gray-100"></th>
+                    {userIds.map(uid => (
+                      <th key={uid} className="border px-2 py-1 text-left text-xs text-gray-600">Distance | Time</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(pivotExpanded ? dates : dates.slice(0, 10)).map(d => (
+                    <tr key={d}>
+                      <td className="border px-2 py-1 sticky left-0 bg-white">{d}</td>
+                      {userIds.map(uid => {
+                        const e = byDate.get(d)?.[uid];
+                        return (
+                          <td key={uid} className="border px-2 py-1">
+                            {e ? (() => {
+                              const km = Number(e.km) || 0;
+                              const hrs = Number(e.hours) || 0;
+                              const timeStr = formatHHMMSS(hrs);
+                              const rawPace = (typeof e.pace === 'number' ? e.pace : (km > 0 && hrs > 0 ? hrs / km : null));
+                              const paceStr = rawPace != null ? formatPaceMMSS(rawPace) : '';
+                              return <span>{km} km / {timeStr}{paceStr ? ` / pace ${paceStr} min/km` : ''}</span>;
+                            })() : (
+                              <span className="text-gray-400">—</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                  {dates.length === 0 && (
+                    <tr>
+                      <td className="border px-2 py-2 text-center text-gray-500" colSpan={1 + userIds.length}>No entries.</td>
+                    </tr>
+                  )}
+                </tbody>
+                <tfoot className="bg-gray-50">
+                  <tr>
+                    <td className="border px-2 py-1 font-semibold">Totals</td>
+                    {userIds.map(uid => {
+                      const km = totals[uid]?.km ?? 0;
+                      const hrs = totals[uid]?.hours ?? 0;
+                      return (
+                        <td key={uid} className="border px-2 py-1 font-semibold">
+                          {Number(km).toFixed(2)} km / {formatHHMMSS(hrs)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                </tfoot>
+              </table>
+              {dates.length > 10 && (
+                <div className="flex items-center justify-center mt-3">
+                  <button className="text-xs border px-3 py-1 rounded" onClick={() => setPivotExpanded(v => !v)}>
+                    {pivotExpanded ? 'Show less' : 'Show more'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+      
+
+          
+
+          <div className="bg-white p-4 rounded shadow">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-medium">Daily screenshots (by user)</h3>
+              <button className="text-xs border px-2 py-1 rounded" onClick={() => setDateAsc(v => !v)}>
+                Sort: {dateAsc ? 'Oldest first' : 'Newest first'}
+              </button>
+            </div>
+            <div className="overflow-auto">
+              <table className="min-w-full text-sm border">
+                <thead className="bg-gray-100">
+                  <tr>
+                    <th className="border px-2 py-1 text-left sticky left-0 bg-gray-100">Date</th>
+                    {userIds.map(uid => (
+                      <th key={uid} className="border px-2 py-1 text-left min-w-[140px]">{userById[uid]?.email}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    const byDateUser = new Map();
+                    for (const up of uploads) {
+                      if (!String(up.mimetype).startsWith('image/')) continue;
+                      const d = up.date || new Date(up.created_at).toISOString().slice(0,10);
+                      if (!byDateUser.has(d)) byDateUser.set(d, {});
+                      const row = byDateUser.get(d);
+                      row[up.user_id] = up; // latest wins due to ORDER BY created_at DESC above
+                    }
+                    const tblDates = Array.from(byDateUser.keys()).sort((a,b) => dateAsc ? a.localeCompare(b) : b.localeCompare(a));
+                    return tblDates.map(d => (
+                      <tr key={d}>
+                        <td className="border px-2 py-1 sticky left-0 bg-white">{d}</td>
+                        {userIds.map(uid => {
+                          const up = byDateUser.get(d)?.[uid];
+                          return (
+                            <td key={uid} className="border px-2 py-1">
+                              {up ? (
+                                <a href={`/api/admin/uploads/${up.id}/file`} target="_blank" rel="noreferrer">
+                                  <img src={`/api/admin/uploads/${up.id}/file`} alt={up.originalname} className="w-28 h-20 object-cover rounded" />
+                                </a>
+                              ) : (
+                                <span className="text-gray-400">—</span>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ));
+                  })()}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function Top10Monthly() {
+      const [month, setMonth] = React.useState(() => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      });
+      const [rows, setRows] = React.useState([]);
+      const [loading, setLoading] = React.useState(false);
+
+      const load = React.useCallback(() => {
+        setLoading(true);
+        api(`/api/admin/top10?month=${encodeURIComponent(month)}`).then(d => {
+          setRows(d.top10 || []);
+          setLoading(false);
+        });
+      }, [month]);
+
+      React.useEffect(() => { load(); }, [load]);
+
+      return (
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <label className="text-sm">Month</label>
+            <input type="month" value={month} onChange={e => setMonth(e.target.value)} className="border p-1 rounded" />
+            <button className="bg-blue-600 text-white text-sm px-3 py-1 rounded" onClick={load}>Refresh</button>
+          </div>
+          <div className="overflow-auto">
+            <table className="min-w-[360px] text-sm border">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th className="border px-2 py-1 text-left">Rank</th>
+                  <th className="border px-2 py-1 text-left">User</th>
+                  <th className="border px-2 py-1 text-right">Total km</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={r.user_id}>
+                    <td className="border px-2 py-1">{i+1}</td>
+                    <td className="border px-2 py-1">{r.email}</td>
+                    <td className="border px-2 py-1 text-right">{Number(r.total_km).toFixed(2)}</td>
+                  </tr>
+                ))}
+                {!loading && rows.length === 0 && (
+                  <tr>
+                    <td className="border px-2 py-2 text-center text-gray-500" colSpan={3}>No data</td>
+                  </tr>
+                )}
+                {loading && (
+                  <tr>
+                    <td className="border px-2 py-2 text-center text-gray-500" colSpan={3}>Loading...</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    function Dashboard({ onLogout, isAdmin }) {
+      const [date, setDate] = React.useState(() => new Date().toISOString().slice(0,10));
+      const [km, setKm] = React.useState('');
+      const [hours, setHours] = React.useState('');
+      const [entries, setEntries] = React.useState([]);
+      const [uploadMsg, setUploadMsg] = React.useState('');
+      const [file, setFile] = React.useState(null);
+      const [userDateAsc, setUserDateAsc] = React.useState(false);
+
+      const load = React.useCallback(() => {
+        api('/api/entries').then(d => setEntries(d.entries || []));
+      }, []);
+      React.useEffect(() => { load(); }, [load]);
+
+      const submitEntry = async (e) => {
+        e.preventDefault();
+        const toHours = (t) => {
+          if (t == null || t === '') return 0;
+          if (typeof t === 'number') return t;
+          if (typeof t !== 'string') return Number(t) || 0;
+          if (!t.includes(':')) return Number(t) || 0;
+          const parts = t.split(':').map(x => x.trim());
+          const hh = Number(parts[0]) || 0;
+          const mm = Number(parts[1] || 0) || 0;
+          const ss = Number(parts[2] || 0) || 0;
+          return hh + (mm / 60) + (ss / 3600);
+        };
+        const hoursDec = toHours(hours);
+        if (!file) { setUploadMsg('Screenshot is required'); return; }
+        const form = new FormData();
+        form.append('date', date);
+        form.append('km', km);
+        form.append('hours', String(hoursDec));
+        if (km && hoursDec) {
+          const pace = Number(hoursDec) / Number(km);
+          form.append('pace', String(pace));
+        }
+        form.append('file', file);
+        const resp = await fetch('/api/entries', { method: 'POST', body: form, credentials: 'include' });
+        const res = await resp.json();
+        if (res.ok) { setKm(''); setHours(''); setFile(null); setUploadMsg(''); load(); }
+        else { setUploadMsg(res.error || 'Failed to save'); }
+      };
+
+      const uploadFile = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const form = new FormData();
+        form.append('file', file);
+        const res = await fetch('/api/uploads', { method: 'POST', body: form, credentials: 'include' });
+        const json = await res.json();
+        setUploadMsg(json.ok ? 'Uploaded successfully' : (json.error || 'Upload failed'));
+      };
+
+      return (
+        <div className="mt-6 space-y-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold">Dashboard</h2>
+            <button className="text-sm text-red-600" onClick={onLogout}>Logout</button>
+          </div>
+
+          {!isAdmin && (
+            <form onSubmit={submitEntry} className="bg-white p-4 rounded shadow grid grid-cols-1 sm:grid-cols-4 gap-3">
+              <input type="date" className="border p-2 rounded" value={date} onChange={e => setDate(e.target.value)} required />
+              <input type="number" step="0.01" className="border p-2 rounded" placeholder="Distance (km)" value={km} onChange={e => setKm(e.target.value)} required />
+              <input type="text" className="border p-2 rounded" placeholder="Time (HH:MM:SS or HH:MM or hours)" value={hours} onChange={e => setHours(e.target.value)} required />
+              <button className="bg-green-600 text-white rounded p-2">Save</button>
+            </form>
+          )}
+
+          {!isAdmin && (
+            <div className="bg-white p-4 rounded shadow">
+              <label className="block text-sm font-medium mb-2">Upload screenshot (required)</label>
+              <input type="file" accept="image/*" onChange={e => setFile(e.target.files?.[0] || null)} className="block w-full" required />
+              {uploadMsg && <div className="text-sm mt-2 text-red-600">{uploadMsg}</div>}
+            </div>
+          )}
+
+          {!isAdmin && (
+            <div className="bg-white p-4 rounded shadow">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-medium">Recent entries</h3>
+                <button className="text-xs border px-2 py-1 rounded" onClick={() => setUserDateAsc(v => !v)}>
+                  Sort: {userDateAsc ? 'Oldest first' : 'Newest first'}
+                </button>
+              </div>
+              <div className="overflow-auto">
+                <table className="min-w-full text-sm border">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="border px-2 py-1 text-left">Date</th>
+                      <th className="border px-2 py-1 text-left">Distance (km)</th>
+                      <th className="border px-2 py-1 text-left">Time (HH:MM:SS)</th>
+                      <th className="border px-2 py-1 text-left">Pace (min/km)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...entries].sort((a,b) => userDateAsc ? String(a.date).localeCompare(String(b.date)) : String(b.date).localeCompare(String(a.date))).map(e => (
+                      <tr key={e.id}>
+                        <td className="border px-2 py-1">{e.date}</td>
+                        <td className="border px-2 py-1">{e.km}</td>
+                        <td className="border px-2 py-1">{formatHHMMSS(e.hours)}</td>
+                        <td className="border px-2 py-1">{(() => {
+                          const km = Number(e.km) || 0;
+                          const hrs = Number(e.hours) || 0;
+                          if (km > 0 && hrs > 0) return formatPaceMMSS(hrs / km);
+                          return '—';
+                        })()}</td>
+                      </tr>
+                    ))}
+                    {entries.length === 0 && (
+                      <tr>
+                        <td className="border px-2 py-2 text-center text-gray-500" colSpan={4}>No entries yet.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {isAdmin && (
+            <div className="bg-white p-4 rounded shadow">
+              <h3 className="font-medium mb-2">Admin</h3>
+              <AdminPanel />
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function App() {
+      const { me, loading, setMe } = useMe();
+      const logout = async () => { await api('/api/logout', { method: 'POST' }); setMe(null); };
+      const authed = async () => { const d = await api('/api/me'); setMe(d.user); };
+      if (loading) return <div className="p-6">Loading...</div>;
+      if (!me) return <AuthForms onAuthed={authed} />;
+      return <Dashboard onLogout={logout} isAdmin={me?.is_admin} />;
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
+
+
