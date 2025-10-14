@@ -184,8 +184,11 @@ router.get('/api/admin/users', requireAdmin, (req, res) => {
 });
 
 router.get('/api/admin/entries', requireAdmin, (req, res) => {
-  const sql = `SELECT e.id, e.user_id, u.email, e.entry_date as date, e.km_run as km, e.hours, e.pace
-               FROM entries e JOIN users u ON u.id = e.user_id
+  const sql = `SELECT e.id, e.user_id, u.email, e.entry_date as date, e.km_run as km, e.hours, e.pace,
+                      up.id as upload_id, up.filename, up.originalname, up.mimetype
+               FROM entries e 
+               JOIN users u ON u.id = e.user_id
+               LEFT JOIN uploads up ON up.entry_id = e.id
                ORDER BY e.entry_date DESC, e.user_id ASC LIMIT 500`;
   db.all(sql, [], (err, rows) => {
     if (err) return res.status(500).json({ error: 'Failed to fetch entries' });

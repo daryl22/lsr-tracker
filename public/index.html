@@ -313,6 +313,18 @@
                                   <div className="text-xs">
                                     {km} km / {timeStr}{paceStr ? ` / pace ${paceStr} min/km` : ''}
                                   </div>
+                                  {e.upload_id && (
+                                    <div className="text-xs">
+                                      <a 
+                                        href={`/api/admin/uploads/${e.upload_id}/file`} 
+                                        target="_blank" 
+                                        rel="noreferrer"
+                                        className="text-blue-600 hover:text-blue-800"
+                                      >
+                                        📷 Screenshot
+                                      </a>
+                                    </div>
+                                  )}
                                   <div className="flex space-x-1">
                                     <button 
                                       onClick={() => openEditModal(e)}
