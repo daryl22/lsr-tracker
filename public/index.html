@@ -395,6 +395,13 @@
       const [uploadMsg, setUploadMsg] = React.useState('');
       const [file, setFile] = React.useState(null);
       const [userDateAsc, setUserDateAsc] = React.useState(false);
+      
+      // Edit modal state
+      const [editingEntry, setEditingEntry] = React.useState(null);
+      const [editDate, setEditDate] = React.useState('');
+      const [editKm, setEditKm] = React.useState('');
+      const [editHours, setEditHours] = React.useState('');
+      const [editMsg, setEditMsg] = React.useState('');
 
       const load = React.useCallback(() => {
         api('/api/entries').then(d => setEntries(d.entries || []));
@@ -441,6 +448,79 @@
         setUploadMsg(json.ok ? 'Uploaded successfully' : (json.error || 'Upload failed'));
       };
 
+      const openEditModal = (entry) => {
+        setEditingEntry(entry);
+        setEditDate(entry.date);
+        setEditKm(entry.km.toString());
+        // Convert decimal hours back to HH:MM:SS format for editing
+        const formatHoursToTime = (hoursDec) => {
+          const totalSeconds = Math.max(0, Math.round((Number(hoursDec) || 0) * 3600));
+          const hh = Math.floor(totalSeconds / 3600);
+          const mm = Math.floor((totalSeconds % 3600) / 60);
+          const ss = totalSeconds % 60;
+          return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+        };
+        setEditHours(formatHoursToTime(entry.hours));
+        setEditMsg('');
+      };
+
+      const closeEditModal = () => {
+        setEditingEntry(null);
+        setEditDate('');
+        setEditKm('');
+        setEditHours('');
+        setEditMsg('');
+      };
+
+      const updateEntry = async (e) => {
+        e.preventDefault();
+        if (!confirm('Are you confident that your entered data is correct?')) return;
+        
+        const toHours = (t) => {
+          if (t == null || t === '') return 0;
+          if (typeof t === 'number') return t;
+          if (typeof t !== 'string') return Number(t) || 0;
+          if (!t.includes(':')) return Number(t) || 0;
+          const parts = t.split(':').map(x => x.trim());
+          const hh = Number(parts[0]) || 0;
+          const mm = Number(parts[1] || 0) || 0;
+          const ss = Number(parts[2] || 0) || 0;
+          return hh + (mm / 60) + (ss / 3600);
+        };
+        
+        const hoursDec = toHours(editHours);
+        const kmNum = Number(editKm) || 0;
+        const paceNum = kmNum > 0 && hoursDec > 0 ? hoursDec / kmNum : null;
+        
+        const res = await api(`/api/entries/${editingEntry.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            date: editDate,
+            km: kmNum,
+            hours: hoursDec,
+            pace: paceNum
+          })
+        });
+        
+        if (res.ok) {
+          closeEditModal();
+          load();
+        } else {
+          setEditMsg(res.error || 'Failed to update entry');
+        }
+      };
+
+      const deleteEntry = async (entryId) => {
+        if (!confirm('Are you sure you want to delete this entry?')) return;
+        
+        const res = await api(`/api/entries/${entryId}`, { method: 'DELETE' });
+        if (res.ok) {
+          load();
+        } else {
+          alert(res.error || 'Failed to delete entry');
+        }
+      };
+
       return (
         <div className="mt-6 space-y-6">
           <div className="flex items-center justify-between">
@@ -481,6 +561,7 @@
                       <th className="border px-2 py-1 text-left">Distance (km)</th>
                       <th className="border px-2 py-1 text-left">Time (HH:MM:SS)</th>
                       <th className="border px-2 py-1 text-left">Pace (min/km)</th>
+                      <th className="border px-2 py-1 text-left">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -495,11 +576,25 @@
                           if (km > 0 && hrs > 0) return formatPaceMMSS(hrs / km);
                           return '—';
                         })()}</td>
+                        <td className="border px-2 py-1">
+                          <button 
+                            onClick={() => openEditModal(e)}
+                            className="text-blue-600 hover:text-blue-800 text-xs mr-2"
+                          >
+                            Edit
+                          </button>
+                          <button 
+                            onClick={() => deleteEntry(e.id)}
+                            className="text-red-600 hover:text-red-800 text-xs"
+                          >
+                            Delete
+                          </button>
+                        </td>
                       </tr>
                     ))}
                     {entries.length === 0 && (
                       <tr>
-                        <td className="border px-2 py-2 text-center text-gray-500" colSpan={4}>No entries yet.</td>
+                        <td className="border px-2 py-2 text-center text-gray-500" colSpan={5}>No entries yet.</td>
                       </tr>
                     )}
                   </tbody>
@@ -512,6 +607,69 @@
             <div className="bg-white p-4 rounded shadow">
               <h3 className="font-medium mb-2">Admin</h3>
               <AdminPanel />
+            </div>
+          )}
+
+          {/* Edit Entry Modal */}
+          {editingEntry && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full mx-4">
+                <h3 className="text-lg font-semibold mb-4">Edit Entry</h3>
+                <form onSubmit={updateEntry}>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Date</label>
+                      <input
+                        type="date"
+                        value={editDate}
+                        onChange={e => setEditDate(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Distance (km)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={editKm}
+                        onChange={e => setEditKm(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Time (HH:MM:SS)</label>
+                      <input
+                        type="text"
+                        value={editHours}
+                        onChange={e => setEditHours(e.target.value)}
+                        placeholder="HH:MM:SS or HH:MM or hours"
+                        className="w-full border p-2 rounded"
+                        required
+                      />
+                    </div>
+                    {editMsg && (
+                      <div className="text-red-600 text-sm">{editMsg}</div>
+                    )}
+                  </div>
+                  <div className="flex justify-end space-x-2 mt-6">
+                    <button
+                      type="button"
+                      onClick={closeEditModal}
+                      className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                    >
+                      Update Entry
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
           )}
         </div>
