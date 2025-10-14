@@ -6,21 +6,13 @@
   "type": "module",
   "scripts": {
     "start": "node src/app.js",
-    "dev": "nodemon src/app.js",
-    "vercel-build": "echo 'Build step for Vercel deployment'",
-    "test": "echo \"Error: no test specified\" && exit 1"
-    
+    "dev": "nodemon src/app.js"
   },
   "dependencies": {
-    "@vendia/serverless-express": "^4.12.6",
-    "bcrypt": "^5.1.1",
-    "connect-sqlite3": "^0.9.15",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "express-session": "^1.17.3",
-    "multer": "^1.4.5-lts.1",
-    "sqlite3": "^5.1.7"
+    "jsonwebtoken": "^9.0.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.7"
