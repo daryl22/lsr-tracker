@@ -382,60 +382,6 @@
 
       
 
-          
-
-          <div className="bg-white p-4 rounded shadow">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-medium">Daily screenshots (by user)</h3>
-              <button className="text-xs border px-2 py-1 rounded" onClick={() => setDateAsc(v => !v)}>
-                Sort: {dateAsc ? 'Oldest first' : 'Newest first'}
-              </button>
-            </div>
-            <div className="overflow-auto">
-              <table className="min-w-full text-sm border">
-                <thead className="bg-gray-100">
-                  <tr>
-                    <th className="border px-2 py-1 text-left sticky left-0 bg-gray-100">Date</th>
-                    {userIds.map(uid => (
-                      <th key={uid} className="border px-2 py-1 text-left min-w-[140px]">{userById[uid]?.email}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {(() => {
-                    const byDateUser = new Map();
-                    for (const up of uploads) {
-                      if (!String(up.mimetype).startsWith('image/')) continue;
-                      const d = up.date || new Date(up.created_at).toISOString().slice(0,10);
-                      if (!byDateUser.has(d)) byDateUser.set(d, {});
-                      const row = byDateUser.get(d);
-                      row[up.user_id] = up; // latest wins due to ORDER BY created_at DESC above
-                    }
-                    const tblDates = Array.from(byDateUser.keys()).sort((a,b) => dateAsc ? a.localeCompare(b) : b.localeCompare(a));
-                    return tblDates.map(d => (
-                      <tr key={d}>
-                        <td className="border px-2 py-1 sticky left-0 bg-white">{d}</td>
-                        {userIds.map(uid => {
-                          const up = byDateUser.get(d)?.[uid];
-                          return (
-                            <td key={uid} className="border px-2 py-1">
-                              {up ? (
-                                <a href={`/api/admin/uploads/${up.id}/file`} target="_blank" rel="noreferrer">
-                                  <img src={`/api/admin/uploads/${up.id}/file`} alt={up.originalname} className="w-28 h-20 object-cover rounded" />
-                                </a>
-                              ) : (
-                                <span className="text-gray-400">—</span>
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ));
-                  })()}
-                </tbody>
-              </table>
-            </div>
-          </div>
 
           {/* Admin Edit Entry Modal */}
           {editingEntry && (
