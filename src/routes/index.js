@@ -35,11 +35,16 @@ function requireAdmin(req, res, next) {
 
 router.get('/api/entries', requireAuth, (req, res) => {
   db.all(
-    'SELECT id, entry_date as date, km_run as km, hours, pace FROM entries WHERE user_id = ? ORDER BY entry_date DESC LIMIT 30',
+    `SELECT e.id, e.entry_date as date, e.km_run as km, e.hours, e.pace, 
+            u.id as upload_id, u.filename, u.originalname, u.mimetype
+     FROM entries e 
+     LEFT JOIN uploads u ON u.entry_id = e.id 
+     WHERE e.user_id = ? 
+     ORDER BY e.entry_date DESC LIMIT 30`,
     [req.session.userId],
     (err, rows) => {
       if (err) return res.status(500).json({ error: 'Failed to fetch' });
-      res.json({ entries: rows });
+      res.json({ entries: rows || [] });
     }
   );
 });
@@ -267,6 +272,20 @@ router.get('/api/admin/uploads/:id/file', requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid id' });
   db.get('SELECT filename, originalname, mimetype FROM uploads WHERE id = ?', [id], (err, row) => {
+    if (err || !row) return res.status(404).json({ error: 'Not found' });
+    const filePath = path.join(uploadDir, row.filename);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File missing' });
+    res.setHeader('Content-Type', row.mimetype);
+    res.setHeader('Content-Disposition', `inline; filename="${row.originalname.replaceAll('"','')}"`);
+    fs.createReadStream(filePath).pipe(res);
+  });
+});
+
+// User uploads endpoint - users can access their own uploads
+router.get('/api/uploads/:id/file', requireAuth, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid id' });
+  db.get('SELECT filename, originalname, mimetype FROM uploads WHERE id = ? AND user_id = ?', [id, req.session.userId], (err, row) => {
     if (err || !row) return res.status(404).json({ error: 'Not found' });
     const filePath = path.join(uploadDir, row.filename);
     if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File missing' });

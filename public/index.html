@@ -725,6 +725,7 @@
                       <th className="border px-2 py-1 text-left">Distance (km)</th>
                       <th className="border px-2 py-1 text-left">Time (HH:MM:SS)</th>
                       <th className="border px-2 py-1 text-left">Pace (min/km)</th>
+                      <th className="border px-2 py-1 text-left">Screenshot</th>
                       <th className="border px-2 py-1 text-left">Actions</th>
                     </tr>
                   </thead>
@@ -740,6 +741,20 @@
                           if (km > 0 && hrs > 0) return formatPaceMMSS(hrs / km);
                           return '—';
                         })()}</td>
+                        <td className="border px-2 py-1">
+                          {e.upload_id ? (
+                            <a 
+                              href={`/api/uploads/${e.upload_id}/file`} 
+                              target="_blank" 
+                              rel="noreferrer"
+                              className="text-blue-600 hover:text-blue-800 text-xs"
+                            >
+                              View Screenshot
+                            </a>
+                          ) : (
+                            <span className="text-gray-400 text-xs">No screenshot</span>
+                          )}
+                        </td>
                         <td className="border px-2 py-1">
                           <button 
                             onClick={() => openEditModal(e)}
@@ -758,7 +773,7 @@
                     ))}
                     {entries.length === 0 && (
                       <tr>
-                        <td className="border px-2 py-2 text-center text-gray-500" colSpan={5}>No entries yet.</td>
+                        <td className="border px-2 py-2 text-center text-gray-500" colSpan={6}>No entries yet.</td>
                       </tr>
                     )}
                   </tbody>
