@@ -322,16 +322,16 @@
                 <thead className="bg-gray-100">
                   <tr>
                     <th className="border px-2 py-1 text-left sticky left-0 bg-gray-100">Date</th>
-                    {userIds.map(uid => (
-                      <th key={uid} className="border px-2 py-1 text-left min-w-[160px]">
+                    {userIds.map((uid, index) => (
+                      <th key={uid} className={`border px-2 py-1 text-left min-w-[160px] ${index % 2 === 0 ? 'bg-gray-50' : 'bg-gray-100'}`}>
                         <span className="truncate" title={userById[uid]?.email || ('User ' + uid)}>{userById[uid]?.email || ('User ' + uid)}</span>
                       </th>
                     ))}
                   </tr>
                   <tr>
                     <th className="border px-2 py-1 text-left sticky left-0 bg-gray-100"></th>
-                    {userIds.map(uid => (
-                      <th key={uid} className="border px-2 py-1 text-left text-xs text-gray-600">Distance | Time</th>
+                    {userIds.map((uid, index) => (
+                      <th key={uid} className={`border px-2 py-1 text-left text-xs text-gray-600 ${index % 2 === 0 ? 'bg-gray-50' : 'bg-gray-100'}`}>Distance | Time</th>
                     ))}
                   </tr>
                 </thead>
@@ -339,10 +339,10 @@
                   {(pivotExpanded ? dates : dates.slice(0, 10)).map(d => (
                     <tr key={d}>
                       <td className="border px-2 py-1 sticky left-0 bg-white">{d}</td>
-                      {userIds.map(uid => {
+                      {userIds.map((uid, index) => {
                         const e = byDate.get(d)?.[uid];
                         return (
-                          <td key={uid} className="border px-2 py-1">
+                          <td key={uid} className={`border px-2 py-1 ${index % 2 === 0 ? 'bg-gray-50' : 'bg-gray-100'}`}>
                             {e ? (() => {
                               const km = Number(e.km) || 0;
                               const hrs = Number(e.hours) || 0;
@@ -399,11 +399,11 @@
                 <tfoot className="bg-gray-50">
                   <tr>
                     <td className="border px-2 py-1 font-semibold">Totals</td>
-                    {userIds.map(uid => {
+                    {userIds.map((uid, index) => {
                       const km = totals[uid]?.km ?? 0;
                       const hrs = totals[uid]?.hours ?? 0;
                       return (
-                        <td key={uid} className="border px-2 py-1 font-semibold">
+                        <td key={uid} className={`border px-2 py-1 font-semibold ${index % 2 === 0 ? 'bg-gray-50' : 'bg-gray-100'}`}>
                           {Number(km).toFixed(2)} km / {formatHHMMSS(hrs)}
                         </td>
                       );
