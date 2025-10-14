@@ -87,6 +87,10 @@
       const pageSize = 9;
       const [dateAsc, setDateAsc] = React.useState(false);
       const [pivotExpanded, setPivotExpanded] = React.useState(false);
+      const [currentMonth, setCurrentMonth] = React.useState(() => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      });
       
       // Admin edit modal state
       const [editingEntry, setEditingEntry] = React.useState(null);
@@ -97,9 +101,9 @@
       const loadAll = React.useCallback(() => {
         Promise.all([
           api('/api/admin/users').then(d => d.users || []),
-          api('/api/admin/entries').then(d => d.entries || [])
+          api(`/api/admin/entries?month=${encodeURIComponent(currentMonth)}`).then(d => d.entries || [])
         ]).then(([u, e]) => { setUsers(u); setEntries(e); setUserPage(1); });
-      }, []);
+      }, [currentMonth]);
       React.useEffect(() => { loadAll(); }, [loadAll]);
 
       const deleteUser = async (id) => {
@@ -182,6 +186,26 @@
         } else {
           alert(res.error || 'Failed to delete entry');
         }
+      };
+
+      const navigateMonth = (direction) => {
+        const [year, month] = currentMonth.split('-').map(Number);
+        const date = new Date(year, month - 1, 1); // month is 0-based in Date constructor
+        
+        if (direction === 'prev') {
+          date.setMonth(date.getMonth() - 1);
+        } else {
+          date.setMonth(date.getMonth() + 1);
+        }
+        
+        const newMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        setCurrentMonth(newMonth);
+      };
+
+      const formatMonthDisplay = (monthStr) => {
+        const [year, month] = monthStr.split('-');
+        const date = new Date(year, month - 1, 1);
+        return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
       };
 
       const loadUploads = React.useCallback(() => {
@@ -275,6 +299,23 @@
               <button className="text-xs border px-2 py-1 rounded" onClick={() => setDateAsc(v => !v)}>
                 Sort: {dateAsc ? 'Oldest first' : 'Newest first'}
               </button>
+            </div>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center space-x-2">
+                <button 
+                  onClick={() => navigateMonth('prev')}
+                  className="text-sm border px-3 py-1 rounded hover:bg-gray-50"
+                >
+                  ← Previous
+                </button>
+                <span className="text-sm font-medium">{formatMonthDisplay(currentMonth)}</span>
+                <button 
+                  onClick={() => navigateMonth('next')}
+                  className="text-sm border px-3 py-1 rounded hover:bg-gray-50"
+                >
+                  Next →
+                </button>
+              </div>
             </div>
             <div className="overflow-auto">
               <table className="min-w-full text-sm border">
@@ -516,6 +557,10 @@
       const [uploadMsg, setUploadMsg] = React.useState('');
       const [file, setFile] = React.useState(null);
       const [userDateAsc, setUserDateAsc] = React.useState(false);
+      const [currentMonth, setCurrentMonth] = React.useState(() => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      });
       
       // Edit modal state
       const [editingEntry, setEditingEntry] = React.useState(null);
@@ -525,8 +570,8 @@
       const [editMsg, setEditMsg] = React.useState('');
 
       const load = React.useCallback(() => {
-        api('/api/entries').then(d => setEntries(d.entries || []));
-      }, []);
+        api(`/api/entries?month=${encodeURIComponent(currentMonth)}`).then(d => setEntries(d.entries || []));
+      }, [currentMonth]);
       React.useEffect(() => { load(); }, [load]);
 
       const submitEntry = async (e) => {
@@ -643,6 +688,26 @@
         }
       };
 
+      const navigateMonth = (direction) => {
+        const [year, month] = currentMonth.split('-').map(Number);
+        const date = new Date(year, month - 1, 1); // month is 0-based in Date constructor
+        
+        if (direction === 'prev') {
+          date.setMonth(date.getMonth() - 1);
+        } else {
+          date.setMonth(date.getMonth() + 1);
+        }
+        
+        const newMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        setCurrentMonth(newMonth);
+      };
+
+      const formatMonthDisplay = (monthStr) => {
+        const [year, month] = monthStr.split('-');
+        const date = new Date(year, month - 1, 1);
+        return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
+      };
+
       return (
         <div className="mt-6 space-y-6">
           <div className="flex items-center justify-between">
@@ -671,9 +736,28 @@
             <div className="bg-white p-4 rounded shadow">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="font-medium">Recent entries</h3>
-                <button className="text-xs border px-2 py-1 rounded" onClick={() => setUserDateAsc(v => !v)}>
-                  Sort: {userDateAsc ? 'Oldest first' : 'Newest first'}
-                </button>
+                <div className="flex items-center space-x-2">
+                  <button className="text-xs border px-2 py-1 rounded" onClick={() => setUserDateAsc(v => !v)}>
+                    Sort: {userDateAsc ? 'Oldest first' : 'Newest first'}
+                  </button>
+                </div>
+              </div>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center space-x-2">
+                  <button 
+                    onClick={() => navigateMonth('prev')}
+                    className="text-sm border px-3 py-1 rounded hover:bg-gray-50"
+                  >
+                    ← Previous
+                  </button>
+                  <span className="text-sm font-medium">{formatMonthDisplay(currentMonth)}</span>
+                  <button 
+                    onClick={() => navigateMonth('next')}
+                    className="text-sm border px-3 py-1 rounded hover:bg-gray-50"
+                  >
+                    Next →
+                  </button>
+                </div>
               </div>
               <div className="overflow-auto">
                 <table className="min-w-full text-sm border">

@@ -34,17 +34,40 @@ function requireAdmin(req, res, next) {
 }
 
 router.get('/api/entries', requireAuth, (req, res) => {
+  const { month } = req.query; // format YYYY-MM
+  let start, end;
+  
+  if (month && /^\d{4}-\d{2}$/.test(month)) {
+    start = month + '-01';
+    // Compute end as next month
+    const [y, m] = month.split('-').map(Number);
+    const next = new Date(y, m, 1); // m is 1-based here due to Date usage below
+    const nextY = next.getFullYear();
+    const nextM = String(next.getMonth() + 1).padStart(2, '0');
+    end = `${nextY}-${nextM}-01`;
+  } else {
+    // default: current month
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    start = `${y}-${m}-01`;
+    const next = new Date(y, now.getMonth() + 1, 1);
+    const nextY = next.getFullYear();
+    const nextM = String(next.getMonth() + 1).padStart(2, '0');
+    end = `${nextY}-${nextM}-01`;
+  }
+  
   db.all(
     `SELECT e.id, e.entry_date as date, e.km_run as km, e.hours, e.pace, 
             u.id as upload_id, u.filename, u.originalname, u.mimetype
      FROM entries e 
      LEFT JOIN uploads u ON u.entry_id = e.id 
-     WHERE e.user_id = ? 
-     ORDER BY e.entry_date DESC LIMIT 30`,
-    [req.session.userId],
+     WHERE e.user_id = ? AND e.entry_date >= ? AND e.entry_date < ?
+     ORDER BY e.entry_date DESC`,
+    [req.session.userId, start, end],
     (err, rows) => {
       if (err) return res.status(500).json({ error: 'Failed to fetch' });
-      res.json({ entries: rows || [] });
+      res.json({ entries: rows || [], month: start.slice(0,7) });
     }
   );
 });
@@ -184,15 +207,39 @@ router.get('/api/admin/users', requireAdmin, (req, res) => {
 });
 
 router.get('/api/admin/entries', requireAdmin, (req, res) => {
+  const { month } = req.query; // format YYYY-MM
+  let start, end;
+  
+  if (month && /^\d{4}-\d{2}$/.test(month)) {
+    start = month + '-01';
+    // Compute end as next month
+    const [y, m] = month.split('-').map(Number);
+    const next = new Date(y, m, 1); // m is 1-based here due to Date usage below
+    const nextY = next.getFullYear();
+    const nextM = String(next.getMonth() + 1).padStart(2, '0');
+    end = `${nextY}-${nextM}-01`;
+  } else {
+    // default: current month
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    start = `${y}-${m}-01`;
+    const next = new Date(y, now.getMonth() + 1, 1);
+    const nextY = next.getFullYear();
+    const nextM = String(next.getMonth() + 1).padStart(2, '0');
+    end = `${nextY}-${nextM}-01`;
+  }
+  
   const sql = `SELECT e.id, e.user_id, u.email, e.entry_date as date, e.km_run as km, e.hours, e.pace,
                       up.id as upload_id, up.filename, up.originalname, up.mimetype
                FROM entries e 
                JOIN users u ON u.id = e.user_id
                LEFT JOIN uploads up ON up.entry_id = e.id
-               ORDER BY e.entry_date DESC, e.user_id ASC LIMIT 500`;
-  db.all(sql, [], (err, rows) => {
+               WHERE e.entry_date >= ? AND e.entry_date < ?
+               ORDER BY e.entry_date DESC, e.user_id ASC`;
+  db.all(sql, [start, end], (err, rows) => {
     if (err) return res.status(500).json({ error: 'Failed to fetch entries' });
-    res.json({ entries: rows });
+    res.json({ entries: rows || [], month: start.slice(0,7) });
   });
 });
 
