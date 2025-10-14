@@ -125,6 +125,51 @@ router.delete('/api/entries/:id', requireAuth, (req, res) => {
   });
 });
 
+// Admin entry edit and delete endpoints (can edit/delete any user's entries)
+router.put('/api/admin/entries/:id', requireAdmin, (req, res) => {
+  const entryId = Number(req.params.id);
+  const { date, km, hours, pace } = req.body;
+  
+  if (!Number.isInteger(entryId) || entryId <= 0) {
+    return res.status(400).json({ error: 'Invalid entry ID' });
+  }
+  
+  // Verify the entry exists
+  db.get('SELECT id FROM entries WHERE id = ?', [entryId], (err, row) => {
+    if (err) return res.status(500).json({ error: 'Database error' });
+    if (!row) return res.status(404).json({ error: 'Entry not found' });
+    
+    const kmNum = Number(km) || 0;
+    const hoursNum = Number(hours) || 0;
+    const paceNum = pace === null || pace === undefined || pace === '' ? null : Number(pace);
+    
+    db.run(
+      'UPDATE entries SET entry_date = ?, km_run = ?, hours = ?, pace = ? WHERE id = ?',
+      [date, kmNum, hoursNum, paceNum, entryId],
+      function(updateErr) {
+        if (updateErr) return res.status(500).json({ error: 'Failed to update entry' });
+        if (this.changes === 0) return res.status(404).json({ error: 'Entry not found' });
+        res.json({ ok: true });
+      }
+    );
+  });
+});
+
+router.delete('/api/admin/entries/:id', requireAdmin, (req, res) => {
+  const entryId = Number(req.params.id);
+  
+  if (!Number.isInteger(entryId) || entryId <= 0) {
+    return res.status(400).json({ error: 'Invalid entry ID' });
+  }
+  
+  // Admin can delete any entry
+  db.run('DELETE FROM entries WHERE id = ?', [entryId], function(err) {
+    if (err) return res.status(500).json({ error: 'Failed to delete entry' });
+    if (this.changes === 0) return res.status(404).json({ error: 'Entry not found' });
+    res.json({ ok: true });
+  });
+});
+
 // Admin APIs
 router.get('/api/admin/users', requireAdmin, (req, res) => {
   db.all("SELECT id, email, created_at FROM users WHERE email <> 'admin' ORDER BY id ASC", [], (err, rows) => {
