@@ -410,6 +410,7 @@
 
       const submitEntry = async (e) => {
         e.preventDefault();
+        if (!confirm('Have you verified that the information you entered is accurate?')) return;
         const toHours = (t) => {
           if (t == null || t === '') return 0;
           if (typeof t === 'number') return t;
@@ -474,7 +475,7 @@
 
       const updateEntry = async (e) => {
         e.preventDefault();
-        if (!confirm('Are you confident that your entered data is correct?')) return;
+        if (!confirm('Have you verified that the information you entered is accurate?')) return;
         
         const toHours = (t) => {
           if (t == null || t === '') return 0;
