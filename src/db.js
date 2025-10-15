@@ -31,7 +31,7 @@ export function ensureDatabase() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        created_at DATETIME DEFAULT (datetime('now', '+8 hours'))
       )`
     );
 
@@ -43,7 +43,7 @@ export function ensureDatabase() {
         km_run REAL NOT NULL DEFAULT 0,
         hours REAL NOT NULL DEFAULT 0,
         pace REAL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
         FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
       )`
     );
@@ -57,7 +57,7 @@ export function ensureDatabase() {
         originalname TEXT NOT NULL,
         mimetype TEXT NOT NULL,
         size INTEGER NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
         FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
         FOREIGN KEY(entry_id) REFERENCES entries(id) ON DELETE CASCADE
       )`
@@ -85,7 +85,7 @@ export function ensureDatabase() {
             km_run REAL NOT NULL DEFAULT 0,
             hours REAL NOT NULL DEFAULT 0,
             pace REAL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
           )`
         );
@@ -119,6 +119,7 @@ export function ensureDatabase() {
       }
     });
 
+
     // Create events table
     db.run(
       `CREATE TABLE IF NOT EXISTS events (
@@ -129,7 +130,7 @@ export function ensureDatabase() {
         category TEXT NOT NULL CHECK (category IN ('advanced', 'intermediate')),
         gender_restriction TEXT NOT NULL CHECK (gender_restriction IN ('male', 'female', 'both')),
         km_goal REAL NOT NULL DEFAULT 0,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
         created_by INTEGER NOT NULL,
         FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE CASCADE
       )`
@@ -151,7 +152,7 @@ export function ensureDatabase() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id INTEGER NOT NULL,
         user_id INTEGER NOT NULL,
-        joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        joined_at DATETIME DEFAULT (datetime('now', '+8 hours')),
         FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
         FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
         UNIQUE(event_id, user_id)

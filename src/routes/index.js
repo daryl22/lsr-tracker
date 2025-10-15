@@ -476,14 +476,16 @@ router.post('/api/events/:id/join', requireAuth, (req, res) => {
     if (err) return res.status(500).json({ error: 'Database error' });
     if (!event) return res.status(404).json({ error: 'Event not found' });
     
+    // Get current Philippine time (UTC+8)
     const now = new Date();
+    const phTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
     const startDate = new Date(event.start_date);
     const endDate = new Date(event.end_date);
     
-    if (now < startDate) {
+    if (phTime < startDate) {
       return res.status(400).json({ error: 'Event has not started yet' });
     }
-    if (now > endDate) {
+    if (phTime > endDate) {
       return res.status(400).json({ error: 'Event has already ended' });
     }
     
@@ -574,7 +576,10 @@ router.get('/api/events/:id/ranking', requireAuth, (req, res) => {
 
 // Get available events for users
 router.get('/api/events', requireAuth, (req, res) => {
-  const now = new Date().toISOString().split('T')[0]; // Current date in YYYY-MM-DD format
+  // Get current Philippine time (UTC+8)
+  const now = new Date();
+  const phTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+  const today = phTime.toISOString().split('T')[0]; // Current date in YYYY-MM-DD format
   
   db.all(
     `SELECT e.id, e.name, e.start_date, e.end_date, e.category, e.gender_restriction, e.km_goal,
@@ -585,7 +590,7 @@ router.get('/api/events', requireAuth, (req, res) => {
      LEFT JOIN event_participants ep ON ep.event_id = e.id AND ep.user_id = ?
      WHERE e.end_date >= ?
      ORDER BY e.start_date ASC`,
-    [req.session.userId, now],
+    [req.session.userId, today],
     (err, events) => {
       if (err) return res.status(500).json({ error: 'Failed to fetch events' });
       
