@@ -111,6 +111,52 @@ export function ensureDatabase() {
         db.run('ALTER TABLE uploads ADD COLUMN entry_id INTEGER');
       }
     });
+
+    // Ensure gender column exists on users
+    db.all('PRAGMA table_info(users)', (err, cols) => {
+      if (!err && cols && !cols.some(c => c.name === 'gender')) {
+        db.run('ALTER TABLE users ADD COLUMN gender TEXT CHECK (gender IN (\'male\', \'female\'))');
+      }
+    });
+
+    // Create events table
+    db.run(
+      `CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        category TEXT NOT NULL CHECK (category IN ('advanced', 'intermediate')),
+        gender_restriction TEXT NOT NULL CHECK (gender_restriction IN ('male', 'female', 'both')),
+        km_goal REAL NOT NULL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_by INTEGER NOT NULL,
+        FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE CASCADE
+      )`
+    );
+
+    // Ensure km_goal column exists on events (for existing databases)
+    db.all('PRAGMA table_info(events)', (err, cols) => {
+      if (!err && cols && !cols.some(c => c.name === 'km_goal')) {
+        db.run('ALTER TABLE events ADD COLUMN km_goal REAL NOT NULL DEFAULT 0');
+      }
+      if (!err && cols && !cols.some(c => c.name === 'is_ended')) {
+        db.run('ALTER TABLE events ADD COLUMN is_ended INTEGER NOT NULL DEFAULT 0');
+      }
+    });
+
+    // Create event_participants table
+    db.run(
+      `CREATE TABLE IF NOT EXISTS event_participants (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(event_id, user_id)
+      )`
+    );
     // Seed default admin user (email: admin, password: admin)
     db.get('SELECT id FROM users WHERE email = ? LIMIT 1', ['admin'], (err, row) => {
       if (err) return;

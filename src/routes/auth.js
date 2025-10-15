@@ -6,12 +6,13 @@ const router = Router();
 const db = getDb();
 
 router.post('/api/register', (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'Missing fields' });
+  const { email, password, gender } = req.body;
+  if (!email || !password || !gender) return res.status(400).json({ error: 'Missing fields' });
+  if (!['male', 'female'].includes(gender)) return res.status(400).json({ error: 'Invalid gender' });
 
   const passwordHash = bcrypt.hashSync(password, 10);
-  const stmt = db.prepare('INSERT INTO users (email, password_hash) VALUES (?, ?)');
-  stmt.run(email, passwordHash, function(err) {
+  const stmt = db.prepare('INSERT INTO users (email, password_hash, gender) VALUES (?, ?, ?)');
+  stmt.run(email, passwordHash, gender, function(err) {
     if (err) {
       return res.status(400).json({ error: 'Email already registered' });
     }
@@ -43,9 +44,9 @@ router.post('/api/logout', (req, res) => {
 
 router.get('/api/me', (req, res) => {
   if (!req.session.userId) return res.json({ user: null });
-  db.get('SELECT id, email, is_admin FROM users WHERE id = ?', [req.session.userId], (err, row) => {
+  db.get('SELECT id, email, is_admin, gender FROM users WHERE id = ?', [req.session.userId], (err, row) => {
     if (err || !row) return res.json({ user: null });
-    res.json({ user: { id: row.id, email: row.email, is_admin: !!row.is_admin } });
+    res.json({ user: { id: row.id, email: row.email, is_admin: !!row.is_admin, gender: row.gender } });
   });
 });
 

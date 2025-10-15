@@ -52,13 +52,15 @@
       const [isLogin, setIsLogin] = React.useState(true);
       const [email, setEmail] = React.useState('');
       const [password, setPassword] = React.useState('');
+      const [gender, setGender] = React.useState('male');
       const [error, setError] = React.useState('');
 
       const submit = async (e) => {
         e.preventDefault();
         setError('');
         const path = isLogin ? '/api/login' : '/api/register';
-        const res = await api(path, { method: 'POST', body: JSON.stringify({ email, password }) });
+        const body = isLogin ? { email, password } : { email, password, gender };
+        const res = await api(path, { method: 'POST', body: JSON.stringify(body) });
         if (res.ok) onAuthed(); else setError(res.error || 'Error');
       };
 
@@ -67,8 +69,19 @@
           <h1 className="text-2xl font-semibold mb-4 text-center">{isLogin ? 'Login' : 'Register'}</h1>
           {error && <div className="text-red-600 mb-2">{error}</div>}
           <form onSubmit={submit} className="space-y-3">
-            <input className="w-full border rounded p-2" placeholder="Name" value={email} onChange={e => setEmail(e.target.value)} required />
+            <input className="w-full border rounded p-2" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required />
             <input type="password" className="w-full border rounded p-2" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required />
+            {!isLogin && (
+              <select 
+                className="w-full border rounded p-2" 
+                value={gender} 
+                onChange={e => setGender(e.target.value)}
+                required
+              >
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+              </select>
+            )}
             <button className="w-full bg-blue-600 text-white rounded p-2">{isLogin ? 'Login' : 'Create Account'}</button>
           </form>
           <button className="w-full mt-3 text-sm text-blue-700" onClick={() => setIsLogin(v => !v)}>
@@ -98,11 +111,32 @@
       const [editKm, setEditKm] = React.useState('');
       const [editHours, setEditHours] = React.useState('');
       const [editMsg, setEditMsg] = React.useState('');
+      
+      // Event management state
+      const [events, setEvents] = React.useState([]);
+      const [showEventForm, setShowEventForm] = React.useState(false);
+      const [eventName, setEventName] = React.useState('');
+      const [eventStartDate, setEventStartDate] = React.useState('');
+      const [eventEndDate, setEventEndDate] = React.useState('');
+      const [eventCategory, setEventCategory] = React.useState('intermediate');
+      const [eventGenderRestriction, setEventGenderRestriction] = React.useState('both');
+      const [eventKmGoal, setEventKmGoal] = React.useState('');
+      const [eventMsg, setEventMsg] = React.useState('');
+      const [editingEvent, setEditingEvent] = React.useState(null);
+      
+      // Event participation state
+      const [showParticipantsModal, setShowParticipantsModal] = React.useState(false);
+      const [showRankingModal, setShowRankingModal] = React.useState(false);
+      const [selectedEvent, setSelectedEvent] = React.useState(null);
+      const [participants, setParticipants] = React.useState([]);
+      const [ranking, setRanking] = React.useState([]);
+      const [eventGoal, setEventGoal] = React.useState(0);
       const loadAll = React.useCallback(() => {
         Promise.all([
           api('/api/admin/users').then(d => d.users || []),
-          api(`/api/admin/entries?month=${encodeURIComponent(currentMonth)}`).then(d => d.entries || [])
-        ]).then(([u, e]) => { setUsers(u); setEntries(e); setUserPage(1); });
+          api(`/api/admin/entries?month=${encodeURIComponent(currentMonth)}`).then(d => d.entries || []),
+          api('/api/admin/events').then(d => d.events || [])
+        ]).then(([u, e, ev]) => { setUsers(u); setEntries(e); setEvents(ev); setUserPage(1); });
       }, [currentMonth]);
       React.useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -208,6 +242,152 @@
         return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
       };
 
+      // Event management functions
+      const createEvent = async (e) => {
+        e.preventDefault();
+        if (!eventName || !eventStartDate || !eventEndDate || !eventKmGoal) {
+          setEventMsg('Please fill in all fields');
+          return;
+        }
+        
+        const res = await api('/api/admin/events', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: eventName,
+            start_date: eventStartDate,
+            end_date: eventEndDate,
+            category: eventCategory,
+            gender_restriction: eventGenderRestriction,
+            km_goal: eventKmGoal
+          })
+        });
+        
+        if (res.ok) {
+          setEventName('');
+          setEventStartDate('');
+          setEventEndDate('');
+          setEventCategory('intermediate');
+          setEventGenderRestriction('both');
+          setEventKmGoal('');
+          setEventMsg('');
+          setShowEventForm(false);
+          loadAll();
+        } else {
+          setEventMsg(res.error || 'Failed to create event');
+        }
+      };
+
+      const openEditEventModal = (event) => {
+        setEditingEvent(event);
+        setEventName(event.name);
+        setEventStartDate(event.start_date);
+        setEventEndDate(event.end_date);
+        setEventCategory(event.category);
+        setEventGenderRestriction(event.gender_restriction);
+        setEventKmGoal(event.km_goal || '');
+        setEventMsg('');
+      };
+
+      const closeEditEventModal = () => {
+        setEditingEvent(null);
+        setEventName('');
+        setEventStartDate('');
+        setEventEndDate('');
+        setEventCategory('intermediate');
+        setEventGenderRestriction('both');
+        setEventKmGoal('');
+        setEventMsg('');
+      };
+
+      const updateEvent = async (e) => {
+        e.preventDefault();
+        if (!eventName || !eventStartDate || !eventEndDate || !eventKmGoal) {
+          setEventMsg('Please fill in all fields');
+          return;
+        }
+        
+        const res = await api(`/api/admin/events/${editingEvent.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            name: eventName,
+            start_date: eventStartDate,
+            end_date: eventEndDate,
+            category: eventCategory,
+            gender_restriction: eventGenderRestriction,
+            km_goal: eventKmGoal
+          })
+        });
+        
+        if (res.ok) {
+          closeEditEventModal();
+          loadAll();
+        } else {
+          setEventMsg(res.error || 'Failed to update event');
+        }
+      };
+
+      const deleteEvent = async (eventId) => {
+        if (!confirm('Are you sure you want to delete this event?')) return;
+        
+        const res = await api(`/api/admin/events/${eventId}`, { method: 'DELETE' });
+        if (res.ok) {
+          loadAll();
+        } else {
+          alert(res.error || 'Failed to delete event');
+        }
+      };
+
+      const endEvent = async (eventId) => {
+        if (!confirm('Are you sure you want to end this event? Users will no longer be able to submit entries.')) return;
+        const res = await api(`/api/admin/events/${eventId}/end`, { method: 'POST' });
+        if (res.ok) {
+          alert('Event ended successfully');
+          loadAll();
+        } else {
+          alert(res.error || 'Failed to end event');
+        }
+      };
+
+      // Event participation functions
+      const showParticipants = async (event) => {
+        setSelectedEvent(event);
+        setShowParticipantsModal(true);
+        try {
+          const res = await api(`/api/events/${event.id}/participants`);
+          setParticipants(res.participants || []);
+        } catch (error) {
+          console.error('Failed to load participants:', error);
+          setParticipants([]);
+        }
+      };
+
+      const showRanking = async (event) => {
+        setSelectedEvent(event);
+        setShowRankingModal(true);
+        try {
+          const res = await api(`/api/events/${event.id}/ranking`);
+          setRanking(res.ranking || []);
+          setEventGoal(res.goal || 0);
+        } catch (error) {
+          console.error('Failed to load ranking:', error);
+          setRanking([]);
+          setEventGoal(0);
+        }
+      };
+
+      const closeParticipantsModal = () => {
+        setShowParticipantsModal(false);
+        setSelectedEvent(null);
+        setParticipants([]);
+      };
+
+      const closeRankingModal = () => {
+        setShowRankingModal(false);
+        setSelectedEvent(null);
+        setRanking([]);
+        setEventGoal(0);
+      };
+
       const loadUploads = React.useCallback(() => {
         const qs = selectedUserId ? `?user_id=${encodeURIComponent(selectedUserId)}` : '';
         api(`/api/admin/uploads${qs}`).then(d => setUploads(d.uploads || []));
@@ -256,6 +436,78 @@
 
       return (
         <div className="space-y-6">
+          {/* Event Management Section */}
+          <div className="bg-white p-4 rounded shadow">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-medium">Event Management</h3>
+              <button 
+                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+                onClick={() => setShowEventForm(true)}
+              >
+                Create New Event
+              </button>
+            </div>
+            
+            {/* Events List */}
+            <div className="space-y-3">
+              {events.map(event => (
+                <div key={event.id} className="border rounded p-3 bg-gray-50">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="font-semibold">{event.name}</div>
+                      <div className="text-sm text-gray-600">
+                        {event.start_date} to {event.end_date}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        Category: {event.category} | Gender: {event.gender_restriction} | KM Goal: {event.km_goal} km
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        Created by: {event.created_by_email} on {event.created_at}
+                      </div>
+                    </div>
+                    <div className="flex space-x-2">
+                      <button 
+                        onClick={() => showParticipants(event)}
+                        className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700"
+                      >
+                        Participants
+                      </button>
+                      <button 
+                        onClick={() => showRanking(event)}
+                        className="text-xs bg-purple-600 text-white px-2 py-1 rounded hover:bg-purple-700"
+                      >
+                        Ranking
+                      </button>
+                      {new Date() >= new Date(event.end_date) && !event.is_ended && (
+                        <button 
+                          onClick={() => endEvent(event.id)}
+                          className="text-xs bg-orange-600 text-white px-2 py-1 rounded hover:bg-orange-700"
+                        >
+                          End Event
+                        </button>
+                      )}
+                      <button 
+                        onClick={() => openEditEventModal(event)}
+                        className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700"
+                      >
+                        Edit
+                      </button>
+                      <button 
+                        onClick={() => deleteEvent(event.id)}
+                        className="text-xs bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {events.length === 0 && (
+                <div className="text-gray-500 text-center py-4">No events created yet.</div>
+              )}
+            </div>
+          </div>
+
           <div className="bg-white p-4 rounded shadow">
             <h3 className="font-medium mb-3">Top 10 by km (per month)</h3>
             <Top10Monthly />
@@ -486,6 +738,336 @@
               </div>
             </div>
           )}
+
+          {/* Event Creation Modal */}
+          {showEventForm && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full mx-4">
+                <h3 className="text-lg font-semibold mb-4">Create New Event</h3>
+                <form onSubmit={createEvent}>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Event Name</label>
+                      <input
+                        type="text"
+                        value={eventName}
+                        onChange={e => setEventName(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        placeholder="Enter event name"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Start Date</label>
+                      <input
+                        type="date"
+                        value={eventStartDate}
+                        onChange={e => setEventStartDate(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">End Date</label>
+                      <input
+                        type="date"
+                        value={eventEndDate}
+                        onChange={e => setEventEndDate(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Category</label>
+                      <select
+                        value={eventCategory}
+                        onChange={e => setEventCategory(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        required
+                      >
+                        <option value="intermediate">Intermediate</option>
+                        <option value="advanced">Advanced</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Gender Restriction</label>
+                      <select
+                        value={eventGenderRestriction}
+                        onChange={e => setEventGenderRestriction(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        required
+                      >
+                        <option value="both">Both Male and Female</option>
+                        <option value="male">Male Only</option>
+                        <option value="female">Female Only</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">KM Goal</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={eventKmGoal}
+                        onChange={e => setEventKmGoal(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        placeholder="Enter KM goal (e.g., 100)"
+                        required
+                      />
+                    </div>
+                    {eventMsg && (
+                      <div className="text-red-600 text-sm">{eventMsg}</div>
+                    )}
+                  </div>
+                  <div className="flex justify-end space-x-2 mt-6">
+                    <button
+                      type="button"
+                      onClick={() => setShowEventForm(false)}
+                      className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                    >
+                      Create Event
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Event Edit Modal */}
+          {editingEvent && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full mx-4">
+                <h3 className="text-lg font-semibold mb-4">Edit Event</h3>
+                <form onSubmit={updateEvent}>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Event Name</label>
+                      <input
+                        type="text"
+                        value={eventName}
+                        onChange={e => setEventName(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        placeholder="Enter event name"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Start Date</label>
+                      <input
+                        type="date"
+                        value={eventStartDate}
+                        onChange={e => setEventStartDate(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">End Date</label>
+                      <input
+                        type="date"
+                        value={eventEndDate}
+                        onChange={e => setEventEndDate(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Category</label>
+                      <select
+                        value={eventCategory}
+                        onChange={e => setEventCategory(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        required
+                      >
+                        <option value="intermediate">Intermediate</option>
+                        <option value="advanced">Advanced</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Gender Restriction</label>
+                      <select
+                        value={eventGenderRestriction}
+                        onChange={e => setEventGenderRestriction(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        required
+                      >
+                        <option value="both">Both Male and Female</option>
+                        <option value="male">Male Only</option>
+                        <option value="female">Female Only</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">KM Goal</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={eventKmGoal}
+                        onChange={e => setEventKmGoal(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        placeholder="Enter KM goal (e.g., 100)"
+                        required
+                      />
+                    </div>
+                    {eventMsg && (
+                      <div className="text-red-600 text-sm">{eventMsg}</div>
+                    )}
+                  </div>
+                  <div className="flex justify-end space-x-2 mt-6">
+                    <button
+                      type="button"
+                      onClick={closeEditEventModal}
+                      className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                    >
+                      Update Event
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Participants Modal */}
+          {showParticipantsModal && selectedEvent && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white p-6 rounded-lg shadow-lg max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold">Participants - {selectedEvent.name}</h3>
+                  <button
+                    onClick={closeParticipantsModal}
+                    className="text-gray-500 hover:text-gray-700 text-xl"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="space-y-3">
+                  {participants.map((participant, index) => (
+                    <div key={participant.id} className="border rounded p-3 bg-gray-50">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="font-semibold">{participant.email}</div>
+                          <div className="text-sm text-gray-600">
+                            Joined: {new Date(participant.joined_at).toLocaleString()}
+                          </div>
+                        </div>
+                        <div className="text-sm text-gray-500">
+                          #{index + 1}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {participants.length === 0 && (
+                    <div className="text-gray-500 text-center py-8">No participants yet.</div>
+                  )}
+                </div>
+                <div className="flex justify-end mt-6">
+                  <button
+                    onClick={closeParticipantsModal}
+                    className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Ranking Modal */}
+          {showRankingModal && selectedEvent && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white p-6 rounded-lg shadow-lg max-w-4xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold">Ranking - {selectedEvent.name}</h3>
+                  <button
+                    onClick={closeRankingModal}
+                    className="text-gray-500 hover:text-gray-700 text-xl"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="mb-4 p-3 bg-blue-50 rounded">
+                  <div className="text-sm text-blue-800">
+                    <strong>Event Goal:</strong> {eventGoal} km | 
+                    <strong> Period:</strong> {selectedEvent.start_date} to {selectedEvent.end_date}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {ranking.map((participant, index) => {
+                    const progress = eventGoal > 0 ? (participant.total_km / eventGoal * 100) : 0;
+                    const isGoalReached = participant.total_km >= eventGoal;
+                    return (
+                      <div key={participant.id} className={`border rounded p-3 ${isGoalReached ? 'bg-green-50 border-green-200' : 'bg-gray-50'}`}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-3">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold ${
+                              index === 0 ? 'bg-yellow-500' : 
+                              index === 1 ? 'bg-gray-400' : 
+                              index === 2 ? 'bg-orange-600' : 
+                              'bg-gray-300'
+                            }`}>
+                              {index + 1}
+                            </div>
+                            <div>
+                              <div className="font-semibold">{participant.email}</div>
+                              <div className="text-sm text-gray-600">
+                                {participant.entry_count} entries
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-bold text-lg">
+                              {Number(participant.total_km).toFixed(2)} km
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              {progress.toFixed(1)}% of goal
+                            </div>
+                            {isGoalReached && (
+                              <div className="text-xs text-green-600 font-semibold">
+                                🎯 Goal Reached!
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        {eventGoal > 0 && (
+                          <div className="mt-2">
+                            <div className="w-full bg-gray-200 rounded-full h-2">
+                              <div 
+                                className={`h-2 rounded-full ${isGoalReached ? 'bg-green-500' : 'bg-blue-500'}`}
+                                style={{ width: `${Math.min(progress, 100)}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {ranking.length === 0 && (
+                    <div className="text-gray-500 text-center py-8">No participants or no entries yet.</div>
+                  )}
+                </div>
+                <div className="flex justify-end mt-6">
+                  <button
+                    onClick={closeRankingModal}
+                    className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
@@ -549,7 +1131,7 @@
       );
     }
 
-    function Dashboard({ onLogout, isAdmin }) {
+    function Dashboard({ onLogout, isAdmin, me }) {
       const [date, setDate] = React.useState(() => new Date().toISOString().slice(0,10));
       const [km, setKm] = React.useState('');
       const [hours, setHours] = React.useState('');
@@ -568,11 +1150,248 @@
       const [editKm, setEditKm] = React.useState('');
       const [editHours, setEditHours] = React.useState('');
       const [editMsg, setEditMsg] = React.useState('');
+      
+      // Events state
+      const [events, setEvents] = React.useState([]);
+      const [eventsLoading, setEventsLoading] = React.useState(false);
+      
+      // Event entry modal state
+      const [showEventEntryModal, setShowEventEntryModal] = React.useState(false);
+      const [selectedEventForEntry, setSelectedEventForEntry] = React.useState(null);
+      const [eventEntryDate, setEventEntryDate] = React.useState(() => new Date().toISOString().slice(0,10));
+      const [eventEntryKm, setEventEntryKm] = React.useState('');
+      const [eventEntryHours, setEventEntryHours] = React.useState('');
+      const [eventEntryFile, setEventEntryFile] = React.useState(null);
+      const [eventEntryMsg, setEventEntryMsg] = React.useState('');
+      
+      // Event entries modal state
+      const [showEventEntriesModal, setShowEventEntriesModal] = React.useState(false);
+      const [selectedEventForEntries, setSelectedEventForEntries] = React.useState(null);
+      const [eventEntries, setEventEntries] = React.useState([]);
+      const [editingEventEntry, setEditingEventEntry] = React.useState(null);
+      const [editEventEntryDate, setEditEventEntryDate] = React.useState('');
+      const [editEventEntryKm, setEditEventEntryKm] = React.useState('');
+      const [editEventEntryHours, setEditEventEntryHours] = React.useState('');
+      const [editEventEntryMsg, setEditEventEntryMsg] = React.useState('');
 
       const load = React.useCallback(() => {
         api(`/api/entries?month=${encodeURIComponent(currentMonth)}`).then(d => setEntries(d.entries || []));
       }, [currentMonth]);
       React.useEffect(() => { load(); }, [load]);
+
+      const loadEvents = React.useCallback(async () => {
+        if (isAdmin) return; // Don't load events for admin
+        setEventsLoading(true);
+        try {
+          const res = await api('/api/events');
+          setEvents(res.events || []);
+        } catch (error) {
+          console.error('Failed to load events:', error);
+          setEvents([]);
+        } finally {
+          setEventsLoading(false);
+        }
+      }, [isAdmin]);
+      React.useEffect(() => { loadEvents(); }, [loadEvents]);
+
+      const joinEvent = async (eventId) => {
+        try {
+          const res = await api(`/api/events/${eventId}/join`, { method: 'POST' });
+          if (res.ok) {
+            alert('Successfully joined the event!');
+            loadEvents(); // Reload events to update join status
+          } else {
+            // Show specific error message for gender restrictions
+            if (res.error && res.error.includes('exclusive to')) {
+              alert(`❌ ${res.error}`);
+            } else {
+              alert(res.error || 'Failed to join event');
+            }
+          }
+        } catch (error) {
+          alert('Failed to join event');
+        }
+      };
+
+      const openEventEntryModal = (event) => {
+        setSelectedEventForEntry(event);
+        setEventEntryDate(new Date().toISOString().slice(0,10));
+        setEventEntryKm('');
+        setEventEntryHours('');
+        setEventEntryFile(null);
+        setEventEntryMsg('');
+        setShowEventEntryModal(true);
+      };
+
+      const closeEventEntryModal = () => {
+        setShowEventEntryModal(false);
+        setSelectedEventForEntry(null);
+        setEventEntryDate(new Date().toISOString().slice(0,10));
+        setEventEntryKm('');
+        setEventEntryHours('');
+        setEventEntryFile(null);
+        setEventEntryMsg('');
+      };
+
+      const openEventEntriesModal = async (event) => {
+        setSelectedEventForEntries(event);
+        setShowEventEntriesModal(true);
+        
+        // Fetch entries for this event
+        try {
+          const res = await api(`/api/events/${event.id}/entries`);
+          if (res.entries) {
+            setEventEntries(res.entries);
+          } else {
+            setEventEntries([]);
+          }
+        } catch (error) {
+          console.error('Failed to load event entries:', error);
+          setEventEntries([]);
+        }
+      };
+
+      const closeEventEntriesModal = () => {
+        setShowEventEntriesModal(false);
+        setSelectedEventForEntries(null);
+        setEventEntries([]);
+        setEditingEventEntry(null);
+      };
+
+      const openEditEventEntryModal = (entry) => {
+        setEditingEventEntry(entry);
+        setEditEventEntryDate(entry.date);
+        setEditEventEntryKm(String(entry.km));
+        
+        const formatHoursToTime = (hours) => {
+          const totalSeconds = Math.round(Number(hours) * 3600);
+          const hh = Math.floor(totalSeconds / 3600);
+          const mm = Math.floor((totalSeconds % 3600) / 60);
+          const ss = totalSeconds % 60;
+          return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+        };
+        setEditEventEntryHours(formatHoursToTime(entry.hours));
+        setEditEventEntryMsg('');
+      };
+
+      const closeEditEventEntryModal = () => {
+        setEditingEventEntry(null);
+        setEditEventEntryDate('');
+        setEditEventEntryKm('');
+        setEditEventEntryHours('');
+        setEditEventEntryMsg('');
+      };
+
+      const updateEventEntry = async (e) => {
+        e.preventDefault();
+        if (!confirm('Have you verified that the information you entered is accurate?')) return;
+        
+        const toHours = (t) => {
+          if (t == null || t === '') return 0;
+          if (typeof t === 'number') return t;
+          if (typeof t !== 'string') return Number(t) || 0;
+          if (!t.includes(':')) return Number(t) || 0;
+          const parts = t.split(':').map(x => x.trim());
+          const hh = Number(parts[0]) || 0;
+          const mm = Number(parts[1] || 0) || 0;
+          const ss = Number(parts[2] || 0) || 0;
+          return hh + (mm / 60) + (ss / 3600);
+        };
+        
+        const hoursDec = toHours(editEventEntryHours);
+        const kmNum = Number(editEventEntryKm) || 0;
+        const paceNum = kmNum > 0 && hoursDec > 0 ? hoursDec / kmNum : null;
+        
+        const res = await api(`/api/entries/${editingEventEntry.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            date: editEventEntryDate,
+            km: kmNum,
+            hours: hoursDec,
+            pace: paceNum
+          })
+        });
+        
+        if (res.ok) {
+          closeEditEventEntryModal();
+          // Reload event entries
+          if (selectedEventForEntries) {
+            const entriesRes = await api(`/api/events/${selectedEventForEntries.id}/entries`);
+            if (entriesRes.entries) {
+              setEventEntries(entriesRes.entries);
+            }
+          }
+        } else {
+          setEditEventEntryMsg(res.error || 'Failed to update entry');
+        }
+      };
+
+      const deleteEventEntry = async (entryId) => {
+        if (!confirm('Are you sure you want to delete this entry?')) return;
+        const res = await api(`/api/entries/${entryId}`, { method: 'DELETE' });
+        if (res.ok) {
+          // Reload event entries
+          if (selectedEventForEntries) {
+            const entriesRes = await api(`/api/events/${selectedEventForEntries.id}/entries`);
+            if (entriesRes.entries) {
+              setEventEntries(entriesRes.entries);
+            }
+          }
+        }
+      };
+
+      const submitEventEntry = async (e) => {
+        e.preventDefault();
+        if (!eventEntryKm || !eventEntryHours || !eventEntryFile) {
+          setEventEntryMsg('Please fill in all fields and select a screenshot');
+          return;
+        }
+        
+        if (!confirm('Have you verified that the information you entered is accurate?')) return;
+        
+        const toHours = (t) => {
+          if (t == null || t === '') return 0;
+          if (typeof t === 'number') return t;
+          if (typeof t !== 'string') return Number(t) || 0;
+          if (!t.includes(':')) return Number(t) || 0;
+          const parts = t.split(':').map(x => x.trim());
+          const hh = Number(parts[0]) || 0;
+          const mm = Number(parts[1] || 0) || 0;
+          const ss = Number(parts[2] || 0) || 0;
+          return hh + (mm / 60) + (ss / 3600);
+        };
+        
+        const hoursDec = toHours(eventEntryHours);
+        const kmNum = Number(eventEntryKm) || 0;
+        const paceNum = kmNum > 0 && hoursDec > 0 ? hoursDec / kmNum : null;
+        
+        const form = new FormData();
+        form.append('date', eventEntryDate);
+        form.append('km', kmNum);
+        form.append('hours', String(hoursDec));
+        if (paceNum) form.append('pace', String(paceNum));
+        form.append('file', eventEntryFile);
+        
+        try {
+          const res = await fetch(`/api/events/${selectedEventForEntry.id}/entry`, {
+            method: 'POST',
+            body: form,
+            credentials: 'include'
+          });
+          const result = await res.json();
+          
+          if (result.ok) {
+            closeEventEntryModal();
+            load(); // Reload entries
+            loadEvents(); // Reload events to update any status
+            alert('Entry submitted successfully!');
+          } else {
+            setEventEntryMsg(result.error || 'Failed to submit entry');
+          }
+        } catch (error) {
+          setEventEntryMsg('Failed to submit entry');
+        }
+      };
 
       const submitEntry = async (e) => {
         e.preventDefault();
@@ -715,24 +1534,148 @@
             <button className="text-sm text-red-600" onClick={onLogout}>Logout</button>
           </div>
 
-          {!isAdmin && (
-            <form onSubmit={submitEntry} className="bg-white p-4 rounded shadow grid grid-cols-1 sm:grid-cols-4 gap-3">
-              <input type="date" className="border p-2 rounded" value={date} onChange={e => setDate(e.target.value)} required />
-              <input type="number" step="0.01" className="border p-2 rounded" placeholder="Distance (km)" value={km} onChange={e => setKm(e.target.value)} required />
-              <input type="text" className="border p-2 rounded" placeholder="Time (HH:MM:SS or HH:MM or hours)" value={hours} onChange={e => setHours(e.target.value)} required />
-              <button className="bg-green-600 text-white rounded p-2">Save</button>
-            </form>
-          )}
-
-          {!isAdmin && (
+          {false && !isAdmin && events.some(event => event.has_joined) && !events.some(event => event.has_joined && new Date() >= new Date(event.start_date) && new Date() <= new Date(event.end_date)) && (
             <div className="bg-white p-4 rounded shadow">
-              <label className="block text-sm font-medium mb-2">Upload screenshot (required)</label>
-              <input type="file" accept="image/*" onChange={e => setFile(e.target.files?.[0] || null)} className="block w-full" required />
-              {uploadMsg && <div className="text-sm mt-2 text-red-600">{uploadMsg}</div>}
+              <form onSubmit={submitEntry} className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-3">
+                <input 
+                  type="date" 
+                  className="border p-2 rounded" 
+                  value={date} 
+                  onChange={e => setDate(e.target.value)} 
+                  required 
+                />
+                <input type="number" step="0.01" className="border p-2 rounded" placeholder="Distance (km)" value={km} onChange={e => setKm(e.target.value)} required />
+                <input type="text" className="border p-2 rounded" placeholder="Time (HH:MM:SS or HH:MM or hours)" value={hours} onChange={e => setHours(e.target.value)} required />
+                <button className="bg-green-600 text-white rounded p-2">Save</button>
+              </form>
+              <div>
+                <label className="block text-sm font-medium mb-2">Upload screenshot (required)</label>
+                <input type="file" accept="image/*" onChange={e => setFile(e.target.files?.[0] || null)} className="block w-full" required />
+                {uploadMsg && <div className="text-sm mt-2 text-red-600">{uploadMsg}</div>}
+              </div>
             </div>
           )}
 
+          {!isAdmin && events.some(event => {
+            const today = new Date().toISOString().split('T')[0];
+            return event.has_joined && today >= event.start_date && today <= event.end_date && !event.is_ended;
+          }) && (
+            <div className="bg-blue-50 border border-blue-200 rounded p-4">
+              <div className="text-blue-800 text-center">
+                <strong>You are currently participating in an active event!</strong>
+                <br />
+                <span className="text-sm">Please use the "Submit Entry" button in the events section above to log your runs.</span>
+              </div>
+            </div>
+          )}
+
+          {!isAdmin && !events.some(event => event.has_joined) && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded p-4">
+              <div className="text-yellow-800 text-center">
+                <strong>Join an event to start logging your runs!</strong>
+                <br />
+                <span className="text-sm">Please join an available event above to begin tracking your running progress.</span>
+              </div>
+            </div>
+          )}
+
+
           {!isAdmin && (
+            <div className="bg-white p-4 rounded shadow">
+              <h3 className="font-medium mb-4">Available Events</h3>
+              {eventsLoading ? (
+                <div className="text-center py-4">Loading events...</div>
+              ) : (
+                <div className="space-y-3">
+                  {events.map(event => {
+                    const today = new Date().toISOString().split('T')[0];
+                    const isActive = today >= event.start_date && today <= event.end_date && !event.is_ended;
+                    const canJoin = isActive && !event.has_joined;
+                    const isEligible = event.gender_restriction === 'both' || event.gender_restriction === me?.gender;
+                    
+                    return (
+                      <div key={event.id} className={`border rounded p-3 ${event.has_joined ? 'bg-green-50 border-green-200' : 'bg-gray-50'}`}>
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="font-semibold">{event.name}</div>
+                            <div className="text-sm text-gray-600">
+                              {event.start_date} to {event.end_date}
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              Category: {event.category} | Gender: {event.gender_restriction === 'both' ? 'All' : event.gender_restriction === 'male' ? 'Male only' : 'Female only'} | Goal: {event.km_goal} km
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              Created by: {event.created_by_email}
+                            </div>
+                            {event.has_joined && (
+                              <div className="mt-1 space-y-1">
+                                <div className="text-xs text-green-600 font-semibold">
+                                  ✓ You have joined this event
+                                </div>
+                                {event.user_rank && event.total_participants > 0 && event.is_ended && (
+                                  <div className="space-y-1">
+                                    <div className="text-xs font-semibold" style={{color: event.user_rank === 1 ? '#FFD700' : event.user_rank === 2 ? '#C0C0C0' : event.user_rank === 3 ? '#CD7F32' : '#4B5563'}}>
+                                      {event.user_rank === 1 ? '🥇' : event.user_rank === 2 ? '🥈' : event.user_rank === 3 ? '🥉' : '📊'} You are ranked {event.user_rank}{event.user_rank === 1 ? 'st' : event.user_rank === 2 ? 'nd' : event.user_rank === 3 ? 'rd' : 'th'} out of {event.total_participants} participant{event.total_participants !== 1 ? 's' : ''}
+                                    </div>
+                                    <div className="text-xs text-gray-700 bg-gray-100 rounded px-2 py-1">
+                                      <strong>Your Stats:</strong> {event.user_total_km?.toFixed(2) || 0} km / {event.user_total_hours?.toFixed(2) || 0} hours / {event.user_total_days || 0} day{event.user_total_days !== 1 ? 's' : ''}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <div className="ml-4">
+                            {event.has_joined && isActive ? (
+                              <div className="flex flex-col gap-2">
+                                <button 
+                                  onClick={() => openEventEntryModal(event)}
+                                  className="text-xs bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 whitespace-nowrap"
+                                >
+                                  Submit Entry
+                                </button>
+                                <button 
+                                  onClick={() => openEventEntriesModal(event)}
+                                  className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 whitespace-nowrap"
+                                >
+                                  Recent Entries
+                                </button>
+                              </div>
+                            ) : event.has_joined && !isActive ? (
+                              <button 
+                                onClick={() => openEventEntriesModal(event)}
+                                className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 whitespace-nowrap"
+                              >
+                                View Entries
+                              </button>
+                            ) : canJoin && isEligible ? (
+                              <button 
+                                onClick={() => joinEvent(event.id)}
+                                className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700"
+                              >
+                                Join Event
+                              </button>
+                            ) : !isEligible ? (
+                              <span className="text-xs text-red-600">
+                                {event.gender_restriction === 'male' ? 'Male only' : 'Female only'}
+                              </span>
+                            ) : !isActive ? (
+                              <span className="text-xs text-gray-500">Event not active</span>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {events.length === 0 && (
+                    <div className="text-gray-500 text-center py-4">No events available.</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {false && !isAdmin && (
             <div className="bg-white p-4 rounded shadow">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="font-medium">Recent entries</h3>
@@ -893,6 +1836,222 @@
               </div>
             </div>
           )}
+
+          {/* Event Recent Entries Modal */}
+          {showEventEntriesModal && selectedEventForEntries && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white p-6 rounded-lg shadow-lg max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+                <h3 className="text-lg font-semibold mb-4">Recent Entries - {selectedEventForEntries.name}</h3>
+                <div className="space-y-3">
+                  {eventEntries.length === 0 ? (
+                    <div className="text-center py-8 text-gray-500">
+                      No entries yet for this event. Submit your first entry!
+                    </div>
+                  ) : (
+                    eventEntries.map(entry => {
+                      const km = Number(entry.km) || 0;
+                      const hrs = Number(entry.hours) || 0;
+                      const timeStr = formatHHMMSS(hrs);
+                      const paceStr = entry.pace != null ? formatPaceMMSS(entry.pace) : '';
+                      
+                      return (
+                        <div key={entry.id} className="border rounded p-3 bg-gray-50">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="font-semibold text-sm">{entry.date}</div>
+                              <div className="text-sm text-gray-600">
+                                {km} km / {timeStr}{paceStr ? ` / pace ${paceStr} min/km` : ''}
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              {entry.upload_id && (
+                                <a 
+                                  href={`/api/uploads/${entry.upload_id}/file`} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700"
+                                >
+                                  View
+                                </a>
+                              )}
+                              <button 
+                                onClick={() => openEditEventEntryModal(entry)}
+                                className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700"
+                              >
+                                Edit
+                              </button>
+                              <button 
+                                onClick={() => deleteEventEntry(entry.id)}
+                                className="text-xs bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+                <div className="flex justify-end mt-6">
+                  <button
+                    onClick={closeEventEntriesModal}
+                    className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Edit Event Entry Modal */}
+          {editingEventEntry && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full mx-4">
+                <h3 className="text-lg font-semibold mb-4">Edit Entry</h3>
+                <form onSubmit={updateEventEntry}>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Date</label>
+                      <input
+                        type="date"
+                        value={editEventEntryDate}
+                        onChange={e => setEditEventEntryDate(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Distance (km)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={editEventEntryKm}
+                        onChange={e => setEditEventEntryKm(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Time (HH:MM:SS)</label>
+                      <input
+                        type="text"
+                        value={editEventEntryHours}
+                        onChange={e => setEditEventEntryHours(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        placeholder="HH:MM:SS or HH:MM or hours"
+                        required
+                      />
+                    </div>
+                    {editEventEntryMsg && (
+                      <div className="text-red-600 text-sm">{editEventEntryMsg}</div>
+                    )}
+                  </div>
+                  <div className="flex justify-end space-x-2 mt-6">
+                    <button
+                      type="button"
+                      onClick={closeEditEventEntryModal}
+                      className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                    >
+                      Update Entry
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Event Entry Modal */}
+          {showEventEntryModal && selectedEventForEntry && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full mx-4">
+                <h3 className="text-lg font-semibold mb-4">Submit Entry - {selectedEventForEntry.name}</h3>
+                <form onSubmit={submitEventEntry}>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Date</label>
+                      <input
+                        type="date"
+                        value={eventEntryDate}
+                        onChange={e => setEventEntryDate(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        min={selectedEventForEntry.start_date}
+                        max={selectedEventForEntry.end_date}
+                        required
+                      />
+                      <div className="text-xs text-gray-500 mt-1">
+                        Event period: {selectedEventForEntry.start_date} to {selectedEventForEntry.end_date}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Distance (km)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={eventEntryKm}
+                        onChange={e => setEventEntryKm(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        placeholder="Enter distance"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Time (HH:MM:SS)</label>
+                      <input
+                        type="text"
+                        value={eventEntryHours}
+                        onChange={e => setEventEntryHours(e.target.value)}
+                        className="w-full border p-2 rounded"
+                        placeholder="HH:MM:SS or HH:MM or hours"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Screenshot (required)</label>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={e => setEventEntryFile(e.target.files?.[0] || null)}
+                        className="w-full border p-2 rounded"
+                        required
+                      />
+                    </div>
+                    <div className="bg-blue-50 p-3 rounded">
+                      <div className="text-sm text-blue-800">
+                        <strong>Event Goal:</strong> {selectedEventForEntry.km_goal} km
+                      </div>
+                    </div>
+                    {eventEntryMsg && (
+                      <div className="text-red-600 text-sm">{eventEntryMsg}</div>
+                    )}
+                  </div>
+                  <div className="flex justify-end space-x-2 mt-6">
+                    <button
+                      type="button"
+                      onClick={closeEventEntryModal}
+                      className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+                    >
+                      Submit Entry
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
@@ -903,7 +2062,7 @@
       const authed = async () => { const d = await api('/api/me'); setMe(d.user); };
       if (loading) return <div className="p-6">Loading...</div>;
       if (!me) return <AuthForms onAuthed={authed} />;
-      return <Dashboard onLogout={logout} isAdmin={me?.is_admin} />;
+      return <Dashboard onLogout={logout} isAdmin={me?.is_admin} me={me} />;
     }
 
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);

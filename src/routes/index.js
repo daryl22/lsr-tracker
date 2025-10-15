@@ -345,6 +345,379 @@ router.get('/api/uploads/:id/file', requireAuth, (req, res) => {
   });
 });
 
+// Event management APIs
+router.post('/api/admin/events', requireAdmin, (req, res) => {
+  const { name, start_date, end_date, category, gender_restriction, km_goal } = req.body;
+  
+  if (!name || !start_date || !end_date || !category || !gender_restriction || km_goal === undefined || km_goal === null) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  
+  if (!['advanced', 'intermediate'].includes(category)) {
+    return res.status(400).json({ error: 'Invalid category' });
+  }
+  
+  if (!['male', 'female', 'both'].includes(gender_restriction)) {
+    return res.status(400).json({ error: 'Invalid gender restriction' });
+  }
+  
+  if (new Date(start_date) >= new Date(end_date)) {
+    return res.status(400).json({ error: 'End date must be after start date' });
+  }
+  
+  const kmGoalNum = Number(km_goal) || 0;
+  if (kmGoalNum < 0) {
+    return res.status(400).json({ error: 'KM goal must be a positive number' });
+  }
+  
+  const stmt = db.prepare(
+    'INSERT INTO events (name, start_date, end_date, category, gender_restriction, km_goal, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  );
+  
+  stmt.run(name, start_date, end_date, category, gender_restriction, kmGoalNum, req.session.userId, function(err) {
+    if (err) return res.status(500).json({ error: 'Failed to create event' });
+    res.json({ ok: true, eventId: this.lastID });
+  });
+});
+
+router.get('/api/admin/events', requireAdmin, (req, res) => {
+  db.all(
+    `SELECT e.id, e.name, e.start_date, e.end_date, e.category, e.gender_restriction, e.km_goal,
+            e.created_at, e.is_ended, u.email as created_by_email
+     FROM events e
+     JOIN users u ON u.id = e.created_by
+     ORDER BY e.created_at DESC`,
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: 'Failed to fetch events' });
+      res.json({ events: rows || [] });
+    }
+  );
+});
+
+router.put('/api/admin/events/:id', requireAdmin, (req, res) => {
+  const eventId = Number(req.params.id);
+  const { name, start_date, end_date, category, gender_restriction, km_goal } = req.body;
+  
+  if (!Number.isInteger(eventId) || eventId <= 0) {
+    return res.status(400).json({ error: 'Invalid event ID' });
+  }
+  
+  if (!name || !start_date || !end_date || !category || !gender_restriction || km_goal === undefined || km_goal === null) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  
+  if (!['advanced', 'intermediate'].includes(category)) {
+    return res.status(400).json({ error: 'Invalid category' });
+  }
+  
+  if (!['male', 'female', 'both'].includes(gender_restriction)) {
+    return res.status(400).json({ error: 'Invalid gender restriction' });
+  }
+  
+  if (new Date(start_date) >= new Date(end_date)) {
+    return res.status(400).json({ error: 'End date must be after start date' });
+  }
+  
+  const kmGoalNum = Number(km_goal) || 0;
+  if (kmGoalNum < 0) {
+    return res.status(400).json({ error: 'KM goal must be a positive number' });
+  }
+  
+  db.run(
+    'UPDATE events SET name = ?, start_date = ?, end_date = ?, category = ?, gender_restriction = ?, km_goal = ? WHERE id = ?',
+    [name, start_date, end_date, category, gender_restriction, kmGoalNum, eventId],
+    function(err) {
+      if (err) return res.status(500).json({ error: 'Failed to update event' });
+      if (this.changes === 0) return res.status(404).json({ error: 'Event not found' });
+      res.json({ ok: true });
+    }
+  );
+});
+
+// End an event manually
+router.post('/api/admin/events/:id/end', requireAdmin, (req, res) => {
+  const eventId = Number(req.params.id);
+  if (!Number.isInteger(eventId) || eventId <= 0) {
+    return res.status(400).json({ error: 'Invalid event ID' });
+  }
+  
+  db.run('UPDATE events SET is_ended = 1 WHERE id = ?', [eventId], function(err) {
+    if (err) return res.status(500).json({ error: 'Failed to end event' });
+    if (this.changes === 0) return res.status(404).json({ error: 'Event not found' });
+    res.json({ ok: true });
+  });
+});
+
+router.delete('/api/admin/events/:id', requireAdmin, (req, res) => {
+  const eventId = Number(req.params.id);
+  
+  if (!Number.isInteger(eventId) || eventId <= 0) {
+    return res.status(400).json({ error: 'Invalid event ID' });
+  }
+  
+  db.run('DELETE FROM events WHERE id = ?', [eventId], function(err) {
+    if (err) return res.status(500).json({ error: 'Failed to delete event' });
+    if (this.changes === 0) return res.status(404).json({ error: 'Event not found' });
+    res.json({ ok: true });
+  });
+});
+
+// Event participation APIs
+router.post('/api/events/:id/join', requireAuth, (req, res) => {
+  const eventId = Number(req.params.id);
+  
+  if (!Number.isInteger(eventId) || eventId <= 0) {
+    return res.status(400).json({ error: 'Invalid event ID' });
+  }
+  
+  // Check if event exists and is active
+  db.get('SELECT * FROM events WHERE id = ?', [eventId], (err, event) => {
+    if (err) return res.status(500).json({ error: 'Database error' });
+    if (!event) return res.status(404).json({ error: 'Event not found' });
+    
+    const now = new Date();
+    const startDate = new Date(event.start_date);
+    const endDate = new Date(event.end_date);
+    
+    if (now < startDate) {
+      return res.status(400).json({ error: 'Event has not started yet' });
+    }
+    if (now > endDate) {
+      return res.status(400).json({ error: 'Event has already ended' });
+    }
+    
+    // Check if user already joined
+    db.get('SELECT id FROM event_participants WHERE event_id = ? AND user_id = ?', [eventId, req.session.userId], (err, existing) => {
+      if (err) return res.status(500).json({ error: 'Database error' });
+      if (existing) return res.status(400).json({ error: 'You have already joined this event' });
+      
+      // Check gender eligibility
+      db.get('SELECT gender FROM users WHERE id = ?', [req.session.userId], (err, user) => {
+        if (err) return res.status(500).json({ error: 'Database error' });
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        
+        // Check if user's gender matches event restriction
+        if (event.gender_restriction !== 'both' && event.gender_restriction !== user.gender) {
+          return res.status(403).json({ 
+            error: `This event is exclusive to ${event.gender_restriction} participants only. You are ${user.gender}.` 
+          });
+        }
+        
+        // Join the event
+        db.run('INSERT INTO event_participants (event_id, user_id) VALUES (?, ?)', [eventId, req.session.userId], function(err) {
+          if (err) return res.status(500).json({ error: 'Failed to join event' });
+          res.json({ ok: true, participantId: this.lastID });
+        });
+      });
+    });
+  });
+});
+
+router.get('/api/events/:id/participants', requireAuth, (req, res) => {
+  const eventId = Number(req.params.id);
+  
+  if (!Number.isInteger(eventId) || eventId <= 0) {
+    return res.status(400).json({ error: 'Invalid event ID' });
+  }
+  
+  db.all(
+    `SELECT u.id, u.email, ep.joined_at
+     FROM event_participants ep
+     JOIN users u ON u.id = ep.user_id
+     WHERE ep.event_id = ?
+     ORDER BY ep.joined_at ASC`,
+    [eventId],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: 'Failed to fetch participants' });
+      res.json({ participants: rows || [] });
+    }
+  );
+});
+
+router.get('/api/events/:id/ranking', requireAuth, (req, res) => {
+  const eventId = Number(req.params.id);
+  
+  if (!Number.isInteger(eventId) || eventId <= 0) {
+    return res.status(400).json({ error: 'Invalid event ID' });
+  }
+  
+  // Get event details
+  db.get('SELECT * FROM events WHERE id = ?', [eventId], (err, event) => {
+    if (err) return res.status(500).json({ error: 'Database error' });
+    if (!event) return res.status(404).json({ error: 'Event not found' });
+    
+    const startDate = event.start_date;
+    const endDate = event.end_date;
+    
+    // Get participants with their total KM during the event period
+    db.all(
+      `SELECT u.id, u.email, COALESCE(SUM(e.km_run), 0) as total_km, COUNT(e.id) as entry_count
+       FROM event_participants ep
+       JOIN users u ON u.id = ep.user_id
+       LEFT JOIN entries e ON e.user_id = u.id AND e.entry_date >= ? AND e.entry_date <= ?
+       WHERE ep.event_id = ?
+       GROUP BY u.id, u.email
+       ORDER BY total_km DESC, u.email ASC`,
+      [startDate, endDate, eventId],
+      (err, rows) => {
+        if (err) return res.status(500).json({ error: 'Failed to fetch ranking' });
+        res.json({ 
+          event: event,
+          ranking: rows || [],
+          goal: event.km_goal
+        });
+      }
+    );
+  });
+});
+
+// Get available events for users
+router.get('/api/events', requireAuth, (req, res) => {
+  const now = new Date().toISOString().split('T')[0]; // Current date in YYYY-MM-DD format
+  
+  db.all(
+    `SELECT e.id, e.name, e.start_date, e.end_date, e.category, e.gender_restriction, e.km_goal,
+            e.created_at, e.is_ended, u.email as created_by_email,
+            CASE WHEN ep.id IS NOT NULL THEN 1 ELSE 0 END as has_joined
+     FROM events e 
+     JOIN users u ON u.id = e.created_by
+     LEFT JOIN event_participants ep ON ep.event_id = e.id AND ep.user_id = ?
+     WHERE e.end_date >= ?
+     ORDER BY e.start_date ASC`,
+    [req.session.userId, now],
+    (err, events) => {
+      if (err) return res.status(500).json({ error: 'Failed to fetch events' });
+      
+      // For each joined event, calculate user's rank
+      const eventsWithRanking = events.map(event => {
+        if (!event.has_joined) {
+          return Promise.resolve({ ...event, user_rank: null, total_participants: 0 });
+        }
+        
+        return new Promise((resolve) => {
+          // Get ranking for this event
+          db.all(
+            `SELECT u.id, 
+                    COALESCE(SUM(e.km_run), 0) as total_km,
+                    COALESCE(SUM(e.hours), 0) as total_hours,
+                    COUNT(DISTINCT e.entry_date) as total_days
+             FROM event_participants ep
+             JOIN users u ON u.id = ep.user_id
+             LEFT JOIN entries e ON e.user_id = u.id AND e.entry_date >= ? AND e.entry_date <= ?
+             WHERE ep.event_id = ?
+             GROUP BY u.id
+             ORDER BY total_km DESC, u.id ASC`,
+            [event.start_date, event.end_date, event.id],
+            (err, ranking) => {
+              if (err) {
+                resolve({ ...event, user_rank: null, total_participants: 0, user_total_km: 0, user_total_hours: 0, user_total_days: 0 });
+                return;
+              }
+              
+              const userRank = ranking.findIndex(r => r.id === req.session.userId) + 1;
+              const userStats = ranking.find(r => r.id === req.session.userId);
+              resolve({ 
+                ...event, 
+                user_rank: userRank > 0 ? userRank : null, 
+                total_participants: ranking.length,
+                user_total_km: userStats ? userStats.total_km : 0,
+                user_total_hours: userStats ? userStats.total_hours : 0,
+                user_total_days: userStats ? userStats.total_days : 0
+              });
+            }
+          );
+        });
+      });
+      
+      Promise.all(eventsWithRanking).then(eventsData => {
+        res.json({ events: eventsData });
+      });
+    }
+  );
+});
+
+// Get entries for a specific event (for current user)
+router.get('/api/events/:id/entries', requireAuth, (req, res) => {
+  const eventId = Number(req.params.id);
+  
+  if (!Number.isInteger(eventId) || eventId <= 0) {
+    return res.status(400).json({ error: 'Invalid event ID' });
+  }
+  
+  // Check if event exists
+  db.get('SELECT * FROM events WHERE id = ?', [eventId], (err, event) => {
+    if (err) return res.status(500).json({ error: 'Database error' });
+    if (!event) return res.status(404).json({ error: 'Event not found' });
+    
+    // Check if user is participant in this event
+    db.get('SELECT id FROM event_participants WHERE event_id = ? AND user_id = ?', [eventId, req.session.userId], (err, participant) => {
+      if (err) return res.status(500).json({ error: 'Database error' });
+      if (!participant) return res.status(403).json({ error: 'You are not a participant in this event' });
+      
+      // Get user's entries for this event
+      const sql = `SELECT e.id, e.entry_date as date, e.km_run as km, e.hours, e.pace,
+                          up.id as upload_id, up.filename, up.originalname, up.mimetype
+                   FROM entries e
+                   LEFT JOIN uploads up ON up.entry_id = e.id
+                   WHERE e.user_id = ? AND e.entry_date >= ? AND e.entry_date <= ?
+                   ORDER BY e.entry_date DESC`;
+      
+      db.all(sql, [req.session.userId, event.start_date, event.end_date], (err, rows) => {
+        if (err) return res.status(500).json({ error: 'Failed to fetch entries' });
+        res.json({ entries: rows || [], event: event });
+      });
+    });
+  });
+});
+
+// Submit entry for event participants
+router.post('/api/events/:id/entry', requireAuth, entryUpload, (req, res) => {
+  const eventId = Number(req.params.id);
+  const { date, km, hours, pace } = req.body;
+  
+  if (!Number.isInteger(eventId) || eventId <= 0) {
+    return res.status(400).json({ error: 'Invalid event ID' });
+  }
+  
+  if (!date) return res.status(400).json({ error: 'Missing date' });
+  if (!req.file) return res.status(400).json({ error: 'Screenshot file is required' });
+  
+  // Check if user is participant in this event
+  db.get('SELECT id FROM event_participants WHERE event_id = ? AND user_id = ?', [eventId, req.session.userId], (err, participant) => {
+    if (err) return res.status(500).json({ error: 'Database error' });
+    if (!participant) return res.status(403).json({ error: 'You are not a participant in this event' });
+    
+    // Check if entry date is within event period
+    db.get('SELECT start_date, end_date FROM events WHERE id = ?', [eventId], (err, event) => {
+      if (err) return res.status(500).json({ error: 'Database error' });
+      if (!event) return res.status(404).json({ error: 'Event not found' });
+      
+      if (date < event.start_date || date > event.end_date) {
+        return res.status(400).json({ error: 'Entry date must be within event period' });
+      }
+      
+      const kmNum = Number(km) || 0;
+      const hoursNum = Number(hours) || 0;
+      const paceNum = pace === null || pace === undefined || pace === '' ? null : Number(pace);
+
+      const stmt = db.prepare(
+        'INSERT INTO entries (user_id, entry_date, km_run, hours, pace) VALUES (?, ?, ?, ?, ?)'
+      );
+      stmt.run(req.session.userId, date, kmNum, hoursNum, paceNum, function(err) {
+        if (err) return res.status(500).json({ error: 'Failed to save entry' });
+        const entryId = this.lastID;
+        const { filename, originalname, mimetype, size } = req.file;
+        const upStmt = db.prepare('INSERT INTO uploads (user_id, entry_id, filename, originalname, mimetype, size) VALUES (?, ?, ?, ?, ?, ?)');
+        upStmt.run(req.session.userId, entryId, filename, originalname, mimetype, size, function(upErr) {
+          if (upErr) return res.status(500).json({ error: 'Failed to save screenshot' });
+          return res.json({ ok: true, entryId });
+        });
+      });
+    });
+  });
+});
+
 // Serve SPA
 router.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '..', '..', 'public', 'index.html'));
