@@ -1,7 +1,45 @@
+# Dependencies
 node_modules/
+
+# Data files - NEVER COMMIT TO GIT
 data/
 uploads/
-.env
-*.log
+*.db
+*.sqlite
+*.sqlite3
 
+# Environment files
+.env
+.env.local
+.env.production
+.env.staging
+
+# Logs
+*.log
+logs/
+
+# Backup files
+data/backup/
+*.backup
+
+# Temporary files
+tmp/
+temp/
+
+# Deployment files
 .vercel
+.railway
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build files
+dist/
+build/

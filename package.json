@@ -6,7 +6,21 @@
   "type": "module",
   "scripts": {
     "start": "node src/app.js",
-    "dev": "nodemon src/app.js"
+    "dev": "nodemon src/app.js",
+    "pull-data": "node pull-data.js",
+    "backup": "node backup-local.js",
+    "find-live": "node find-live.js",
+    "deploy": "node deploy-safe.js",
+    "deploy:dev": "set NODE_ENV=development && node deploy-safe.js",
+    "deploy:staging": "set NODE_ENV=staging && node deploy-safe.js",
+    "deploy:prod": "set NODE_ENV=production && node deploy-safe.js",
+    "deploy:ps": "powershell -ExecutionPolicy Bypass -File deploy.ps1",
+    "deploy:ps:dev": "powershell -ExecutionPolicy Bypass -File deploy.ps1 -Environment development",
+    "deploy:ps:staging": "powershell -ExecutionPolicy Bypass -File deploy.ps1 -Environment staging",
+    "deploy:ps:prod": "powershell -ExecutionPolicy Bypass -File deploy.ps1 -Environment production",
+    "staging": "node deploy-staging.js",
+    "staging:start": "NODE_ENV=staging PORT=3001 node src/app.js",
+    "staging:dev": "NODE_ENV=staging PORT=3001 nodemon src/app.js"
   },
   "dependencies": {
     "@vendia/serverless-express": "^4.12.6",
@@ -17,6 +31,7 @@
     "express": "^4.19.2",
     "express-session": "^1.17.3",
     "multer": "^1.4.5-lts.1",
+    "node-fetch": "^3.3.2",
     "sqlite3": "^5.1.7"
   },
   "devDependencies": {
