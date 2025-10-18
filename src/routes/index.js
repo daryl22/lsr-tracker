@@ -25,11 +25,13 @@ const upload = multer({ storage });
 
 function requireAuth(req, res, next) {
   if (!req.session.userId) return res.status(401).json({ error: 'Unauthorized' });
+  req.user = { id: req.session.userId };
   next();
 }
 
 function requireAdmin(req, res, next) {
   if (!req.session.userId || !req.session.isAdmin) return res.status(403).json({ error: 'Forbidden' });
+  req.user = { id: req.session.userId };
   next();
 }
 
@@ -395,6 +397,23 @@ router.get('/api/admin/events', requireAdmin, (req, res) => {
   );
 });
 
+// Get ended events with rankings (admin only)
+router.get('/api/admin/events/ended', requireAdmin, (req, res) => {
+  db.all(
+    `SELECT e.id, e.name, e.start_date, e.end_date, e.category, e.gender_restriction, e.km_goal,
+            e.created_at, e.is_ended, u.email as created_by_email
+     FROM events e
+     JOIN users u ON u.id = e.created_by
+     WHERE e.is_ended = 1
+     ORDER BY e.end_date DESC`,
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: 'Failed to fetch ended events' });
+      res.json({ events: rows || [] });
+    }
+  );
+});
+
 router.put('/api/admin/events/:id', requireAdmin, (req, res) => {
   const eventId = Number(req.params.id);
   const { name, start_date, end_date, category, gender_restriction, km_goal } = req.body;
@@ -574,6 +593,26 @@ router.get('/api/events/:id/ranking', requireAuth, (req, res) => {
   });
 });
 
+// Get ended events for users (public)
+router.get('/api/events/ended', requireAuth, (req, res) => {
+  const userId = req.user.id;
+  
+  db.all(
+    `SELECT e.id, e.name, e.start_date, e.end_date, e.category, e.gender_restriction, e.km_goal,
+            e.created_at, e.is_ended,
+            CASE WHEN ep.user_id IS NOT NULL THEN 1 ELSE 0 END as has_joined
+     FROM events e
+     LEFT JOIN event_participants ep ON e.id = ep.event_id AND ep.user_id = ?
+     WHERE e.is_ended = 1
+     ORDER BY e.end_date DESC`,
+    [userId],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: 'Failed to fetch ended events' });
+      res.json({ events: rows || [] });
+    }
+  );
+});
+
 // Get available events for users
 router.get('/api/events', requireAuth, (req, res) => {
   // Get current Philippine time (UTC+8)
@@ -702,25 +741,114 @@ router.post('/api/events/:id/entry', requireAuth, entryUpload, (req, res) => {
         return res.status(400).json({ error: 'Entry date must be within event period' });
       }
       
-      const kmNum = Number(km) || 0;
-      const hoursNum = Number(hours) || 0;
-      const paceNum = pace === null || pace === undefined || pace === '' ? null : Number(pace);
+      // Check if submission is closed for this date
+      db.get('SELECT id FROM event_closed_dates WHERE event_id = ? AND closed_date = ?', [eventId, date], (err, closedDate) => {
+        if (err) return res.status(500).json({ error: 'Database error' });
+        if (closedDate) {
+          return res.status(400).json({ error: 'Entry submission is closed for this date' });
+        }
+        
+        const kmNum = Number(km) || 0;
+        const hoursNum = Number(hours) || 0;
+        const paceNum = pace === null || pace === undefined || pace === '' ? null : Number(pace);
 
-      const stmt = db.prepare(
-        'INSERT INTO entries (user_id, entry_date, km_run, hours, pace) VALUES (?, ?, ?, ?, ?)'
-      );
-      stmt.run(req.session.userId, date, kmNum, hoursNum, paceNum, function(err) {
-        if (err) return res.status(500).json({ error: 'Failed to save entry' });
-        const entryId = this.lastID;
-        const { filename, originalname, mimetype, size } = req.file;
-        const upStmt = db.prepare('INSERT INTO uploads (user_id, entry_id, filename, originalname, mimetype, size) VALUES (?, ?, ?, ?, ?, ?)');
-        upStmt.run(req.session.userId, entryId, filename, originalname, mimetype, size, function(upErr) {
-          if (upErr) return res.status(500).json({ error: 'Failed to save screenshot' });
-          return res.json({ ok: true, entryId });
+        const stmt = db.prepare(
+          'INSERT INTO entries (user_id, entry_date, km_run, hours, pace) VALUES (?, ?, ?, ?, ?)'
+        );
+        stmt.run(req.session.userId, date, kmNum, hoursNum, paceNum, function(err) {
+          if (err) return res.status(500).json({ error: 'Failed to save entry' });
+          const entryId = this.lastID;
+          const { filename, originalname, mimetype, size } = req.file;
+          const upStmt = db.prepare('INSERT INTO uploads (user_id, entry_id, filename, originalname, mimetype, size) VALUES (?, ?, ?, ?, ?, ?)');
+          upStmt.run(req.session.userId, entryId, filename, originalname, mimetype, size, function(upErr) {
+            if (upErr) return res.status(500).json({ error: 'Failed to save screenshot' });
+            return res.json({ ok: true, entryId });
+          });
         });
       });
     });
   });
+});
+
+// Admin API for managing closed submission dates
+router.post('/api/admin/events/:id/close-date', requireAdmin, (req, res) => {
+  const eventId = Number(req.params.id);
+  const { date } = req.body;
+  
+  if (!Number.isInteger(eventId) || eventId <= 0) {
+    return res.status(400).json({ error: 'Invalid event ID' });
+  }
+  
+  if (!date) return res.status(400).json({ error: 'Missing date' });
+  
+  // Validate date format
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
+  }
+  
+  // Check if event exists
+  db.get('SELECT id, start_date, end_date FROM events WHERE id = ?', [eventId], (err, event) => {
+    if (err) return res.status(500).json({ error: 'Database error' });
+    if (!event) return res.status(404).json({ error: 'Event not found' });
+    
+    // Check if date is within event period
+    if (date < event.start_date || date > event.end_date) {
+      return res.status(400).json({ error: 'Date must be within event period' });
+    }
+    
+    // Insert closed date
+    const stmt = db.prepare('INSERT INTO event_closed_dates (event_id, closed_date, created_by) VALUES (?, ?, ?)');
+    stmt.run(eventId, date, req.session.userId, function(err) {
+      if (err) {
+        if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+          return res.status(400).json({ error: 'This date is already closed for submissions' });
+        }
+        return res.status(500).json({ error: 'Failed to close date' });
+      }
+      res.json({ ok: true, closedDateId: this.lastID });
+    });
+  });
+});
+
+router.delete('/api/admin/events/:id/close-date', requireAdmin, (req, res) => {
+  const eventId = Number(req.params.id);
+  const { date } = req.body;
+  
+  if (!Number.isInteger(eventId) || eventId <= 0) {
+    return res.status(400).json({ error: 'Invalid event ID' });
+  }
+  
+  if (!date) return res.status(400).json({ error: 'Missing date' });
+  
+  const stmt = db.prepare('DELETE FROM event_closed_dates WHERE event_id = ? AND closed_date = ?');
+  stmt.run(eventId, date, function(err) {
+    if (err) return res.status(500).json({ error: 'Database error' });
+    if (this.changes === 0) {
+      return res.status(404).json({ error: 'Closed date not found' });
+    }
+    res.json({ ok: true });
+  });
+});
+
+router.get('/api/admin/events/:id/closed-dates', requireAdmin, (req, res) => {
+  const eventId = Number(req.params.id);
+  
+  if (!Number.isInteger(eventId) || eventId <= 0) {
+    return res.status(400).json({ error: 'Invalid event ID' });
+  }
+  
+  db.all(
+    `SELECT ecd.id, ecd.closed_date, ecd.created_at, u.email as closed_by_email
+     FROM event_closed_dates ecd
+     JOIN users u ON u.id = ecd.created_by
+     WHERE ecd.event_id = ?
+     ORDER BY ecd.closed_date ASC`,
+    [eventId],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: 'Failed to fetch closed dates' });
+      res.json({ closedDates: rows || [] });
+    }
+  );
 });
 
 // Serve SPA
@@ -729,5 +857,3 @@ router.get('*', (req, res) => {
 });
 
 export default router;
-
-

@@ -14,7 +14,7 @@ router.post('/api/register', (req, res) => {
   const stmt = db.prepare('INSERT INTO users (email, password_hash, gender) VALUES (?, ?, ?)');
   stmt.run(email, passwordHash, gender, function(err) {
     if (err) {
-      return res.status(400).json({ error: 'Email already registered' });
+      return res.status(400).json({ error: 'Name already registered' });
     }
     req.session.userId = this.lastID;
     return res.json({ ok: true, userId: this.lastID });

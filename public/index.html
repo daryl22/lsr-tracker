@@ -105,11 +105,24 @@
         return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
       });
       
+      // Multiple entries modal state
+      const [showMultipleEntriesModal, setShowMultipleEntriesModal] = React.useState(false);
+      const [multipleEntriesData, setMultipleEntriesData] = React.useState(null);
+      
       // Admin edit modal state
       const [editingEntry, setEditingEntry] = React.useState(null);
+      
+      // Admin ranking modal state
+      const [showAdminRankingModal, setShowAdminRankingModal] = React.useState(false);
+      const [adminSelectedEvent, setAdminSelectedEvent] = React.useState(null);
+      const [adminRanking, setAdminRanking] = React.useState([]);
+      const [adminEventGoal, setAdminEventGoal] = React.useState(0);
       const [editDate, setEditDate] = React.useState('');
       const [editKm, setEditKm] = React.useState('');
-      const [editHours, setEditHours] = React.useState('');
+      const [editHours, setEditHours] = React.useState('00:00:00');
+      const [editTimeHours, setEditTimeHours] = React.useState(0);
+      const [editTimeMinutes, setEditTimeMinutes] = React.useState(0);
+      const [editTimeSeconds, setEditTimeSeconds] = React.useState(0);
       const [editMsg, setEditMsg] = React.useState('');
       
       // Event management state
@@ -138,7 +151,18 @@
       // Event participation state
       const [showParticipantsModal, setShowParticipantsModal] = React.useState(false);
       const [showRankingModal, setShowRankingModal] = React.useState(false);
+      
+      // Closed dates management state
+      const [showClosedDatesModal, setShowClosedDatesModal] = React.useState(false);
+      const [selectedEventForClosedDates, setSelectedEventForClosedDates] = React.useState(null);
+      const [closedDates, setClosedDates] = React.useState([]);
+      const [newClosedDate, setNewClosedDate] = React.useState('');
+      const [closedDatesMsg, setClosedDatesMsg] = React.useState('');
       const [selectedEvent, setSelectedEvent] = React.useState(null);
+      
+      // Event management tabs state
+      const [eventManagementTab, setEventManagementTab] = React.useState('active');
+      const [endedEvents, setEndedEvents] = React.useState([]);
       const [participants, setParticipants] = React.useState([]);
       const [ranking, setRanking] = React.useState([]);
       const [eventGoal, setEventGoal] = React.useState(0);
@@ -148,7 +172,19 @@
           api(`/api/admin/entries?month=${encodeURIComponent(currentMonth)}`).then(d => d.entries || []),
           api('/api/admin/events').then(d => d.events || [])
         ]).then(([u, e, ev]) => { setUsers(u); setEntries(e); setEvents(ev); setUserPage(1); });
+        
+        // Load ended events
+        loadEndedEvents();
       }, [currentMonth]);
+      
+      const loadEndedEvents = React.useCallback(async () => {
+        try {
+          const res = await api('/api/admin/events/ended');
+          setEndedEvents(res.events || []);
+        } catch (error) {
+          console.error('Failed to load ended events:', error);
+        }
+      }, []);
       React.useEffect(() => { loadAll(); }, [loadAll]);
 
       const deleteUser = async (id) => {
@@ -172,7 +208,13 @@
           const ss = totalSeconds % 60;
           return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
         };
-        setEditHours(formatHoursToTime(entry.hours));
+        const timeString = formatHoursToTime(entry.hours);
+        setEditHours(timeString);
+        // Parse the time string to set dropdown values
+        const timeParts = timeString.split(':');
+        setEditTimeHours(parseInt(timeParts[0]) || 0);
+        setEditTimeMinutes(parseInt(timeParts[1]) || 0);
+        setEditTimeSeconds(parseInt(timeParts[2]) || 0);
         setEditMsg('');
       };
 
@@ -180,12 +222,19 @@
         setEditingEntry(null);
         setEditDate('');
         setEditKm('');
-        setEditHours('');
+        setEditHours('00:00:00');
+        setEditTimeHours(0);
+        setEditTimeMinutes(0);
+        setEditTimeSeconds(0);
         setEditMsg('');
       };
 
       const updateAdminEntry = async (e) => {
         e.preventDefault();
+        
+        // For edit modals, we allow any time (including 0:0:0 if user wants to clear the time)
+        // No validation needed for edit modals
+        
         if (!confirm('Have you verified that the information you entered is accurate?')) return;
         
         const toHours = (t) => {
@@ -361,6 +410,17 @@
           alert(res.error || 'Failed to delete event');
         }
       };
+      
+      const deleteEndedEvent = async (eventId) => {
+        if (!confirm('Are you sure you want to delete this ended event? This will also delete all associated entries and rankings.')) return;
+        
+        const res = await api(`/api/admin/events/${eventId}`, { method: 'DELETE' });
+        if (res.ok) {
+          loadEndedEvents();
+        } else {
+          alert(res.error || 'Failed to delete ended event');
+        }
+      };
 
       const endEvent = async (eventId) => {
         if (!confirm('Are you sure you want to end this event? Users will no longer be able to submit entries.')) return;
@@ -406,11 +466,141 @@
         setParticipants([]);
       };
 
-      const closeRankingModal = () => {
-        setShowRankingModal(false);
-        setSelectedEvent(null);
-        setRanking([]);
-        setEventGoal(0);
+      // Admin ranking modal functions
+      const showAdminRanking = async (event) => {
+        setAdminSelectedEvent(event);
+        setShowAdminRankingModal(true);
+        try {
+          const res = await api(`/api/events/${event.id}/ranking`);
+          setAdminRanking(res.ranking || []);
+          setAdminEventGoal(res.goal || 0);
+        } catch (error) {
+          console.error('Failed to load admin ranking:', error);
+          setAdminRanking([]);
+          setAdminEventGoal(0);
+        }
+      };
+
+      const closeAdminRankingModal = () => {
+        setShowAdminRankingModal(false);
+        setAdminSelectedEvent(null);
+        setAdminRanking([]);
+        setAdminEventGoal(0);
+      };
+
+
+
+
+
+
+      // Multiple entries modal functions
+      const openMultipleEntriesModal = (userId, date) => {
+        // Get all admin entries for this user and date
+        const userEntries = entries.filter(e => e.user_id === userId && e.date === date);
+        const user = userById[userId];
+        
+        console.log('Opening multiple entries modal:', { userId, date, userEntries, user });
+        console.log('All entries:', entries);
+        console.log('User by ID:', userById);
+        
+        const modalData = {
+          date,
+          user,
+          entries: userEntries
+        };
+        
+        console.log('Setting modal data:', modalData);
+        setMultipleEntriesData(modalData);
+        setShowMultipleEntriesModal(true);
+        
+        console.log('Modal state set:', { showMultipleEntriesModal: true, multipleEntriesData: modalData });
+      };
+
+      const closeMultipleEntriesModal = () => {
+        setShowMultipleEntriesModal(false);
+        setMultipleEntriesData(null);
+      };
+
+      // Closed dates management functions
+      const openClosedDatesModal = async (event) => {
+        setSelectedEventForClosedDates(event);
+        setShowClosedDatesModal(true);
+        setClosedDatesMsg('');
+        
+        // Load existing closed dates
+        try {
+          const res = await api(`/api/admin/events/${event.id}/closed-dates`);
+          if (res.closedDates) {
+            setClosedDates(res.closedDates || []);
+          } else {
+            setClosedDatesMsg('Failed to load closed dates');
+          }
+        } catch (error) {
+          setClosedDatesMsg('Failed to load closed dates');
+        }
+      };
+
+      const closeClosedDatesModal = () => {
+        setShowClosedDatesModal(false);
+        setSelectedEventForClosedDates(null);
+        setClosedDates([]);
+        setNewClosedDate('');
+        setClosedDatesMsg('');
+      };
+
+      const addClosedDate = async (e) => {
+        e.preventDefault();
+        if (!newClosedDate) {
+          setClosedDatesMsg('Please select a date');
+          return;
+        }
+        
+        if (!selectedEventForClosedDates) return;
+        
+        try {
+          const res = await api(`/api/admin/events/${selectedEventForClosedDates.id}/close-date`, {
+            method: 'POST',
+            body: JSON.stringify({ date: newClosedDate })
+          });
+          
+          if (res.ok) {
+            setClosedDatesMsg('');
+            setNewClosedDate('');
+            // Reload closed dates
+            const reloadRes = await api(`/api/admin/events/${selectedEventForClosedDates.id}/closed-dates`);
+            if (reloadRes.closedDates) {
+              setClosedDates(reloadRes.closedDates || []);
+            }
+          } else {
+            setClosedDatesMsg(res.error || 'Failed to close date');
+          }
+        } catch (error) {
+          setClosedDatesMsg('Failed to close date');
+        }
+      };
+
+      const removeClosedDate = async (date) => {
+        if (!selectedEventForClosedDates) return;
+        
+        try {
+          const res = await api(`/api/admin/events/${selectedEventForClosedDates.id}/close-date`, {
+            method: 'DELETE',
+            body: JSON.stringify({ date })
+          });
+          
+          if (res.ok) {
+            setClosedDatesMsg('');
+            // Reload closed dates
+            const reloadRes = await api(`/api/admin/events/${selectedEventForClosedDates.id}/closed-dates`);
+            if (reloadRes.closedDates) {
+              setClosedDates(reloadRes.closedDates || []);
+            }
+          } else {
+            setClosedDatesMsg(res.error || 'Failed to reopen date');
+          }
+        } catch (error) {
+          setClosedDatesMsg('Failed to reopen date');
+        }
       };
 
       const loadUploads = React.useCallback(() => {
@@ -443,6 +633,33 @@
         }
         return map;
       }, [entries]);
+      
+      // Check for multiple entries per day per user
+      const hasMultipleEntriesPerUser = React.useMemo(() => {
+        const userEntriesByDate = {};
+        for (const e of entries) {
+          const key = `${e.user_id}-${e.date}`;
+          if (!userEntriesByDate[key]) userEntriesByDate[key] = [];
+          userEntriesByDate[key].push(e);
+        }
+        
+        // Find user-date combinations where user has multiple entries
+        const multipleEntriesMap = new Map();
+        Object.entries(userEntriesByDate).forEach(([key, entries]) => {
+          if (entries.length > 1) {
+            const [userId, date] = key.split('-');
+            multipleEntriesMap.set(key, {
+              userId: parseInt(userId),
+              date,
+              entries
+            });
+            console.log('Found multiple entries:', { key, userId, date, count: entries.length });
+          }
+        });
+        
+        console.log('Multiple entries map:', multipleEntriesMap);
+        return multipleEntriesMap;
+      }, [entries]);
       const dates = React.useMemo(() => {
         const arr = Array.from(byDate.keys());
         return arr.sort((a,b) => dateAsc ? a.localeCompare(b) : b.localeCompare(a));
@@ -465,6 +682,36 @@
           <div className="bg-white p-4 rounded shadow">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-medium">Event Management</h3>
+            </div>
+            
+            {/* Tabs */}
+            <div className="flex border-b mb-4">
+              <button
+                onClick={() => setEventManagementTab('active')}
+                className={`px-4 py-2 text-sm font-medium ${
+                  eventManagementTab === 'active'
+                    ? 'border-b-2 border-blue-500 text-blue-600'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                Active Events
+              </button>
+              <button
+                onClick={() => setEventManagementTab('ended')}
+                className={`px-4 py-2 text-sm font-medium ${
+                  eventManagementTab === 'ended'
+                    ? 'border-b-2 border-blue-500 text-blue-600'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                Ended Events
+              </button>
+            </div>
+            
+            {/* Active Events Tab */}
+            {eventManagementTab === 'active' && (
+              <>
+                <div className="flex items-center justify-between mb-4">
               <button 
                 className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
                 onClick={() => {
@@ -493,7 +740,7 @@
             
             {/* Events List */}
             <div className="space-y-3">
-              {events.map(event => (
+              {events.filter(event => !event.is_ended).map(event => (
                 <div key={event.id} className="border rounded p-3 sm:p-4 bg-gray-50">
                   <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                     <div className="flex-1 min-w-0">
@@ -535,10 +782,16 @@
                         Participants
                       </button>
                       <button 
-                        onClick={() => showRanking(event)}
+                        onClick={() => showAdminRanking(event)}
                         className="text-xs sm:text-sm bg-purple-600 text-white px-2 sm:px-3 py-1 sm:py-2 rounded hover:bg-purple-700 whitespace-nowrap"
                       >
                         Ranking
+                      </button>
+                      <button 
+                        onClick={() => openClosedDatesModal(event)}
+                        className="text-xs sm:text-sm bg-red-600 text-white px-2 sm:px-3 py-1 sm:py-2 rounded hover:bg-red-700 whitespace-nowrap"
+                      >
+                        Manage Closed Dates
                       </button>
                       {(() => {
                         // Get current Philippine time (UTC+8)
@@ -569,10 +822,74 @@
                   </div>
                 </div>
               ))}
-              {events.length === 0 && (
-                <div className="text-gray-500 text-center py-4">No events created yet.</div>
+              {events.filter(event => !event.is_ended).length === 0 && (
+                <div className="text-gray-500 text-center py-4">No active events found.</div>
               )}
             </div>
+                </>
+            )}
+            
+            {/* Ended Events Tab */}
+            {eventManagementTab === 'ended' && (
+              <div className="space-y-3">
+                {endedEvents.map(event => (
+                  <div key={event.id} className="border rounded p-3 sm:p-4 bg-gray-50">
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-sm sm:text-base">{event.name}</div>
+                        <div className="text-xs sm:text-sm text-gray-600 mt-1">
+                          {event.start_date} to {event.end_date}
+                        </div>
+                        <div className="text-xs sm:text-sm text-gray-600 mt-1">
+                          <span className="block sm:inline">Category: {event.category}</span>
+                          <span className="hidden sm:inline"> | </span>
+                          <span className="block sm:inline">Gender: {event.gender_restriction}</span>
+                          <span className="hidden sm:inline"> | </span>
+                          <span className="block sm:inline">KM Goal: {event.km_goal} km</span>
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          Created by: {event.created_by_email} on {(() => {
+                            if (event.created_at) {
+                              const dbTime = new Date(event.created_at);
+                              const phTime = new Date(dbTime.getTime() + (8 * 60 * 60 * 1000));
+                              return phTime.toLocaleString('en-US', {
+                                timeZone: 'Asia/Manila',
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              });
+                            }
+                            return event.created_at;
+                          })()}
+                        </div>
+                        <div className="text-xs text-red-600 mt-1 font-semibold">
+                          ✓ Event Ended
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap sm:flex-nowrap gap-2 sm:ml-4">
+                        <button 
+                          onClick={() => showAdminRanking(event)}
+                          className="text-xs sm:text-sm bg-purple-600 text-white px-2 sm:px-3 py-1 sm:py-2 rounded hover:bg-purple-700 whitespace-nowrap"
+                        >
+                          View Rankings
+                        </button>
+                        <button 
+                          onClick={() => deleteEndedEvent(event.id)}
+                          className="text-xs sm:text-sm bg-red-600 text-white px-2 sm:px-3 py-1 sm:py-2 rounded hover:bg-red-700 whitespace-nowrap"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {endedEvents.length === 0 && (
+                  <div className="text-gray-500 text-center py-4">No ended events found.</div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="bg-white p-4 rounded shadow">
@@ -675,14 +992,48 @@
                       <td className="border px-2 py-1 sticky left-0 bg-white">{d}</td>
                       {userIds.map((uid, index) => {
                         const e = byDate.get(d)?.[uid];
+                        const multipleEntriesKey = `${uid}-${d}`;
+                        const hasMultipleEntries = hasMultipleEntriesPerUser.has(multipleEntriesKey);
+                        
+                        // Debug logging
+                        if (hasMultipleEntries) {
+                          console.log('Cell has multiple entries:', { uid, date: d, key: multipleEntriesKey });
+                        }
+                        
                         return (
                           <td key={uid} className={`border px-2 py-1 ${index % 2 === 0 ? 'bg-gray-50' : 'bg-gray-100'}`}>
                             {e ? (() => {
+                                if (hasMultipleEntries) {
+                                  // Hide details and show View Entries button for multiple entries
+                                  const multipleEntriesData = hasMultipleEntriesPerUser.get(multipleEntriesKey);
+                                  
+                                  return (
+                                    <div className="space-y-1">
+                                      <div className="text-xs text-orange-600 font-medium">
+                                        {multipleEntriesData.entries.length} entries
+                                      </div>
+                                      <div className="flex space-x-1">
+                                        <button 
+                                          onClick={() => {
+                                            console.log('View Entries button clicked:', { uid, date: d });
+                                            openMultipleEntriesModal(uid, d);
+                                          }}
+                                          className="text-xs bg-orange-500 text-white px-2 py-1 rounded hover:bg-orange-600"
+                                          title="Click to view all entries for this user on this date"
+                                        >
+                                          View Entries
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                } else {
+                                  // Show single entry details directly in the table
                               const km = Number(e.km) || 0;
                               const hrs = Number(e.hours) || 0;
                               const timeStr = formatHHMMSS(hrs);
                               const rawPace = (typeof e.pace === 'number' ? e.pace : (km > 0 && hrs > 0 ? hrs / km : null));
                               const paceStr = rawPace != null ? formatPaceMMSS(rawPace) : '';
+                                  
                               return (
                                 <div className="space-y-1">
                                   <div className="text-xs">
@@ -716,6 +1067,7 @@
                                   </div>
                                 </div>
                               );
+                                }
                             })() : (
                               <span className="text-gray-400">—</span>
                             )}
@@ -787,15 +1139,48 @@
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium mb-1">Time (HH:MM:SS)</label>
-                      <input
-                        type="text"
-                        value={editHours}
-                        onChange={e => setEditHours(e.target.value)}
-                        placeholder="HH:MM:SS or HH:MM or hours"
-                        className="w-full border p-2 rounded"
-                        required
-                      />
+                      <label className="block text-sm font-medium mb-1">Moving time</label>
+                      <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                        <div className="flex flex-col">
+                          <label className="block text-xs text-gray-600 mb-1 text-center">Hours</label>
+                          <select 
+                            value={editTimeHours} 
+                            onChange={e => handleEditTimeHoursChange(e.target.value)}
+                            className="w-full border p-2 sm:p-3 rounded text-center text-sm sm:text-base font-mono bg-white"
+                            required
+                          >
+                            {Array.from({length: 25}, (_, i) => (
+                              <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="flex flex-col">
+                          <label className="block text-xs text-gray-600 mb-1 text-center">Minutes</label>
+                          <select 
+                            value={editTimeMinutes} 
+                            onChange={e => handleEditTimeMinutesChange(e.target.value)}
+                            className="w-full border p-2 sm:p-3 rounded text-center text-sm sm:text-base font-mono bg-white"
+                            required
+                          >
+                            {Array.from({length: 60}, (_, i) => (
+                              <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="flex flex-col">
+                          <label className="block text-xs text-gray-600 mb-1 text-center">Seconds</label>
+                          <select 
+                            value={editTimeSeconds} 
+                            onChange={e => handleEditTimeSecondsChange(e.target.value)}
+                            className="w-full border p-2 sm:p-3 rounded text-center text-sm sm:text-base font-mono bg-white"
+                            required
+                          >
+                            {Array.from({length: 60}, (_, i) => (
+                              <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
                     </div>
                     {editMsg && (
                       <div className="text-red-600 text-sm">{editMsg}</div>
@@ -1081,82 +1466,84 @@
             </div>
           )}
 
-          {/* Ranking Modal */}
-          {showRankingModal && selectedEvent && (
+          {/* Multiple Entries Modal */}
+          {showMultipleEntriesModal && multipleEntriesData && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-              <div className="bg-white p-6 rounded-lg shadow-lg max-w-4xl w-full mx-4 max-h-[80vh] overflow-y-auto">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-semibold">Ranking - {selectedEvent.name}</h3>
+              <div className="bg-white p-6 rounded-lg shadow-lg max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-lg font-semibold">
+                    {multipleEntriesData.entries.length > 1 ? 'Multiple' : 'Single'} Entries for {multipleEntriesData.user?.email} on {multipleEntriesData.date} ({multipleEntriesData.entries.length} {multipleEntriesData.entries.length === 1 ? 'entry' : 'entries'})
+                  </h3>
                   <button
-                    onClick={closeRankingModal}
-                    className="text-gray-500 hover:text-gray-700 text-xl"
+                    onClick={closeMultipleEntriesModal}
+                    className="text-gray-500 hover:text-gray-700"
                   >
-                    ×
+                    ✕
                   </button>
                 </div>
-                <div className="mb-4 p-3 bg-blue-50 rounded">
-                  <div className="text-sm text-blue-800">
-                    <strong>Event Goal:</strong> {eventGoal} km | 
-                    <strong> Period:</strong> {selectedEvent.start_date} to {selectedEvent.end_date}
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  {ranking.map((participant, index) => {
-                    const progress = eventGoal > 0 ? (participant.total_km / eventGoal * 100) : 0;
-                    const isGoalReached = participant.total_km >= eventGoal;
+                
+                <div className="space-y-3">
+                  {multipleEntriesData.entries.map((entry, index) => {
+                    const km = Number(entry.km) || 0;
+                    const hrs = Number(entry.hours) || 0;
+                    const timeStr = formatHHMMSS(hrs);
+                    const rawPace = (typeof entry.pace === 'number' ? entry.pace : (km > 0 && hrs > 0 ? hrs / km : null));
+                    const paceStr = rawPace != null ? formatPaceMMSS(rawPace) : '';
+                    
                     return (
-                      <div key={participant.id} className={`border rounded p-3 ${isGoalReached ? 'bg-green-50 border-green-200' : 'bg-gray-50'}`}>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center space-x-3">
-                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold ${
-                              index === 0 ? 'bg-yellow-500' : 
-                              index === 1 ? 'bg-gray-400' : 
-                              index === 2 ? 'bg-orange-600' : 
-                              'bg-gray-300'
-                            }`}>
-                              {index + 1}
+                      <div key={entry.id} className="bg-gray-50 p-4 rounded border">
+                        <div className="flex justify-between items-start">
+                          <div className="flex-1">
+                            <div className="text-sm font-medium mb-2">
+                              Entry #{index + 1}
                             </div>
-                            <div>
-                              <div className="font-semibold">{participant.email}</div>
-                              <div className="text-sm text-gray-600">
-                                {participant.entry_count} entries
-                              </div>
+                            <div className="text-sm text-gray-600 mb-2">
+                              {km} km / {timeStr}{paceStr ? ` / pace ${paceStr} min/km` : ''}
                             </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="font-bold text-lg">
-                              {Number(participant.total_km).toFixed(2)} km
-                            </div>
-                            <div className="text-sm text-gray-600">
-                              {progress.toFixed(1)}% of goal
-                            </div>
-                            {isGoalReached && (
-                              <div className="text-xs text-green-600 font-semibold">
-                                🎯 Goal Reached!
+                            {entry.upload_id && (
+                              <div className="text-xs">
+                                <a 
+                                  href={`/api/admin/uploads/${entry.upload_id}/file`} 
+                                  target="_blank" 
+                                  rel="noreferrer"
+                                  className="text-blue-600 hover:text-blue-800"
+                                >
+                                  📷 Screenshot
+                                </a>
                               </div>
                             )}
                           </div>
-                        </div>
-                        {eventGoal > 0 && (
-                          <div className="mt-2">
-                            <div className="w-full bg-gray-200 rounded-full h-2">
-                              <div 
-                                className={`h-2 rounded-full ${isGoalReached ? 'bg-green-500' : 'bg-blue-500'}`}
-                                style={{ width: `${Math.min(progress, 100)}%` }}
-                              ></div>
-                            </div>
+                          <div className="flex space-x-2">
+                            <button 
+                              onClick={() => {
+                                closeMultipleEntriesModal();
+                                openEditModal(entry);
+                              }}
+                              className="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded"
+                            >
+                              Edit
+                            </button>
+                            <button 
+                              onClick={() => {
+                                if (confirm('Are you sure you want to delete this entry?')) {
+                                  deleteAdminEntry(entry.id);
+                                  closeMultipleEntriesModal();
+                                }
+                              }}
+                              className="text-xs text-red-600 hover:text-red-800 bg-red-50 px-2 py-1 rounded"
+                            >
+                              Delete
+                            </button>
                           </div>
-                        )}
+                        </div>
                       </div>
                     );
                   })}
-                  {ranking.length === 0 && (
-                    <div className="text-gray-500 text-center py-8">No participants or no entries yet.</div>
-                  )}
                 </div>
-                <div className="flex justify-end mt-6">
+                
+                <div className="mt-6 flex justify-end">
                   <button
-                    onClick={closeRankingModal}
+                    onClick={closeMultipleEntriesModal}
                     className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
                   >
                     Close
@@ -1165,6 +1552,183 @@
               </div>
             </div>
           )}
+
+          {/* Closed Dates Management Modal */}
+          {showClosedDatesModal && selectedEventForClosedDates && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white p-6 rounded-lg shadow-lg max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-lg font-semibold">
+                    Manage Closed Submission Dates - {selectedEventForClosedDates.name}
+                  </h3>
+                  <button
+                    onClick={closeClosedDatesModal}
+                    className="text-gray-500 hover:text-gray-700"
+                  >
+                    ✕
+                  </button>
+                </div>
+                
+                <div className="mb-4">
+                  <div className="text-sm text-gray-600 mb-2">
+                    Event Period: {selectedEventForClosedDates.start_date} to {selectedEventForClosedDates.end_date}
+                  </div>
+                  <p className="text-sm text-gray-600">
+                    Close specific dates to prevent users from submitting entries for those dates.
+                  </p>
+                </div>
+
+                {/* Add new closed date form */}
+                <form onSubmit={addClosedDate} className="mb-6">
+                  <div className="flex gap-2 items-end">
+                    <div className="flex-1">
+                      <label className="block text-sm font-medium mb-1">Close Date</label>
+                      <input
+                        type="date"
+                        value={newClosedDate}
+                        onChange={e => setNewClosedDate(e.target.value)}
+                        min={selectedEventForClosedDates.start_date}
+                        max={selectedEventForClosedDates.end_date}
+                        className="w-full border p-2 rounded"
+                        required
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700"
+                    >
+                      Close Date
+                    </button>
+                  </div>
+                </form>
+
+                {closedDatesMsg && (
+                  <div className="text-sm text-red-600 mb-4">{closedDatesMsg}</div>
+                )}
+
+                {/* List of closed dates */}
+                <div className="space-y-2">
+                  <h4 className="font-medium">Closed Dates ({closedDates.length})</h4>
+                  {closedDates.length === 0 ? (
+                    <div className="text-gray-500 text-sm">No dates are currently closed.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {closedDates.map(closedDate => (
+                        <div key={closedDate.id} className="flex items-center justify-between bg-red-50 border border-red-200 rounded p-3">
+                          <div>
+                            <div className="font-medium text-red-800">{closedDate.closed_date}</div>
+                            <div className="text-xs text-red-600">
+                              Closed by {closedDate.closed_by_email} on {new Date(closedDate.created_at).toLocaleDateString()}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => removeClosedDate(closedDate.closed_date)}
+                            className="text-xs bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700"
+                          >
+                            Reopen
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                
+                <div className="mt-6 flex justify-end">
+                  <button
+                    onClick={closeClosedDatesModal}
+                    className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+        {/* Admin Ranking Modal */}
+        {showAdminRankingModal && adminSelectedEvent && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white p-6 rounded-lg shadow-lg max-w-4xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold">Admin Ranking - {adminSelectedEvent.name}</h3>
+                <button
+                  onClick={closeAdminRankingModal}
+                  className="text-gray-500 hover:text-gray-700 text-xl"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="mb-4 p-3 bg-blue-50 rounded">
+                <div className="text-sm text-blue-800">
+                  <strong>Event Goal:</strong> {adminEventGoal} km | 
+                  <strong> Period:</strong> {adminSelectedEvent.start_date} to {adminSelectedEvent.end_date}
+                </div>
+              </div>
+              <div className="space-y-2">
+                {adminRanking.map((participant, index) => {
+                  const progress = adminEventGoal > 0 ? (participant.total_km / adminEventGoal * 100) : 0;
+                  const isGoalReached = participant.total_km >= adminEventGoal;
+                  return (
+                    <div key={participant.id} className={`border rounded p-3 ${isGoalReached ? 'bg-green-50 border-green-200' : 'bg-gray-50'}`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold ${
+                            index === 0 ? 'bg-yellow-500' : 
+                            index === 1 ? 'bg-gray-400' : 
+                            index === 2 ? 'bg-orange-600' : 
+                            'bg-gray-300'
+                          }`}>
+                            {index + 1}
+                          </div>
+                          <div>
+                            <div className="font-semibold">{participant.email}</div>
+                            <div className="text-sm text-gray-600">
+                              {participant.entry_count} entries
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-bold text-lg">
+                            {Number(participant.total_km).toFixed(2)} km
+                          </div>
+                          <div className="text-sm text-gray-600">
+                            {progress.toFixed(1)}% of goal
+                          </div>
+                          {isGoalReached && (
+                            <div className="text-xs text-green-600 font-semibold">
+                              🎯 Goal Reached!
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      {adminEventGoal > 0 && (
+                        <div className="mt-2">
+                          <div className="w-full bg-gray-200 rounded-full h-2">
+                            <div 
+                              className={`h-2 rounded-full ${isGoalReached ? 'bg-green-500' : 'bg-blue-500'}`}
+                              style={{ width: `${Math.min(progress, 100)}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {adminRanking.length === 0 && (
+                  <div className="text-gray-500 text-center py-8">No participants or no entries yet.</div>
+                )}
+              </div>
+              <div className="flex justify-end mt-6">
+                <button
+                  onClick={closeAdminRankingModal}
+                  className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         </div>
       );
     }
@@ -1238,7 +1802,184 @@
         return phTime.toISOString().slice(0,10);
       });
       const [km, setKm] = React.useState('');
-      const [hours, setHours] = React.useState('');
+      const [hours, setHours] = React.useState('00:00:00');
+      const [timeHours, setTimeHours] = React.useState(0);
+      const [timeMinutes, setTimeMinutes] = React.useState(0);
+      const [timeSeconds, setTimeSeconds] = React.useState(0);
+      
+      // Ranking modal state
+      const [showRankingModal, setShowRankingModal] = React.useState(false);
+      const [selectedEvent, setSelectedEvent] = React.useState(null);
+      const [ranking, setRanking] = React.useState([]);
+      const [eventGoal, setEventGoal] = React.useState(0);
+      
+      // Update hours string when dropdown values change
+      const updateTimeString = (h, m, s) => {
+        const hoursStr = String(h).padStart(2, '0');
+        const minutesStr = String(m).padStart(2, '0');
+        const secondsStr = String(s).padStart(2, '0');
+        return `${hoursStr}:${minutesStr}:${secondsStr}`;
+      };
+      
+      // Handle time dropdown changes
+      const handleTimeHoursChange = (value) => {
+        const newHours = parseInt(value);
+        setTimeHours(newHours);
+        setHours(updateTimeString(newHours, timeMinutes, timeSeconds));
+      };
+      
+      const handleTimeMinutesChange = (value) => {
+        const newMinutes = parseInt(value);
+        setTimeMinutes(newMinutes);
+        setHours(updateTimeString(timeHours, newMinutes, timeSeconds));
+      };
+      
+      const handleTimeSecondsChange = (value) => {
+        const newSeconds = parseInt(value);
+        setTimeSeconds(newSeconds);
+        setHours(updateTimeString(timeHours, timeMinutes, newSeconds));
+      };
+
+      // Ranking modal functions
+      const showRanking = async (event) => {
+        setSelectedEvent(event);
+        setShowRankingModal(true);
+        try {
+          const res = await api(`/api/events/${event.id}/ranking`);
+          setRanking(res.ranking || []);
+          setEventGoal(res.goal || 0);
+        } catch (error) {
+          console.error('Failed to load ranking:', error);
+          setRanking([]);
+          setEventGoal(0);
+        }
+      };
+
+      const closeRankingModal = () => {
+        setShowRankingModal(false);
+        setSelectedEvent(null);
+        setRanking([]);
+        setEventGoal(0);
+      };
+      
+      // Edit modal time handlers
+      const handleEditTimeHoursChange = (value) => {
+        const newHours = parseInt(value);
+        setEditTimeHours(newHours);
+        setEditHours(updateTimeString(newHours, editTimeMinutes, editTimeSeconds));
+      };
+      
+      const handleEditTimeMinutesChange = (value) => {
+        const newMinutes = parseInt(value);
+        setEditTimeMinutes(newMinutes);
+        setEditHours(updateTimeString(editTimeHours, newMinutes, editTimeSeconds));
+      };
+      
+      const handleEditTimeSecondsChange = (value) => {
+        const newSeconds = parseInt(value);
+        setEditTimeSeconds(newSeconds);
+        setEditHours(updateTimeString(editTimeHours, editTimeMinutes, newSeconds));
+      };
+      
+      // Event entry time handlers
+      const handleEventEntryTimeHoursChange = (value) => {
+        const newHours = parseInt(value);
+        setEventEntryTimeHours(newHours);
+        setEventEntryHours(updateTimeString(newHours, eventEntryTimeMinutes, eventEntryTimeSeconds));
+      };
+      
+      const handleEventEntryTimeMinutesChange = (value) => {
+        const newMinutes = parseInt(value);
+        setEventEntryTimeMinutes(newMinutes);
+        setEventEntryHours(updateTimeString(eventEntryTimeHours, newMinutes, eventEntryTimeSeconds));
+      };
+      
+      const handleEventEntryTimeSecondsChange = (value) => {
+        const newSeconds = parseInt(value);
+        setEventEntryTimeSeconds(newSeconds);
+        setEventEntryHours(updateTimeString(eventEntryTimeHours, eventEntryTimeMinutes, newSeconds));
+      };
+      
+      // Event entry edit time handlers
+      const handleEditEventEntryTimeHoursChange = (value) => {
+        const newHours = parseInt(value);
+        setEditEventEntryTimeHours(newHours);
+        setEditEventEntryHours(updateTimeString(newHours, editEventEntryTimeMinutes, editEventEntryTimeSeconds));
+      };
+      
+      const handleEditEventEntryTimeMinutesChange = (value) => {
+        const newMinutes = parseInt(value);
+        setEditEventEntryTimeMinutes(newMinutes);
+        setEditEventEntryHours(updateTimeString(editEventEntryTimeHours, newMinutes, editEventEntryTimeSeconds));
+      };
+      
+      const handleEditEventEntryTimeSecondsChange = (value) => {
+        const newSeconds = parseInt(value);
+        setEditEventEntryTimeSeconds(newSeconds);
+        setEditEventEntryHours(updateTimeString(editEventEntryTimeHours, editEventEntryTimeMinutes, newSeconds));
+      };
+      
+      // Validation functions to check if time has been changed from default
+      const isTimeChanged = (hours, minutes, seconds) => {
+        return hours > 0 || minutes > 0 || seconds > 0;
+      };
+      
+      // For edit modals, we need to check if the time is valid (not all zeros)
+      const isEditTimeValid = () => {
+        return editTimeHours > 0 || editTimeMinutes > 0 || editTimeSeconds > 0;
+      };
+      
+      const isEditEventEntryTimeValid = () => {
+        return editEventEntryTimeHours > 0 || editEventEntryTimeMinutes > 0 || editEventEntryTimeSeconds > 0;
+      };
+      
+      // For edit modals, we also need to check if the time has been modified from the original
+      const isEditTimeModified = () => {
+        // This will be true if the time is valid (not all zeros)
+        return isEditTimeValid();
+      };
+      
+      const isEditEventEntryTimeModified = () => {
+        // This will be true if the time is valid (not all zeros)
+        return isEditEventEntryTimeValid();
+      };
+      
+      const isMainTimeChanged = () => isTimeChanged(timeHours, timeMinutes, timeSeconds);
+      const isEditTimeChanged = () => isTimeChanged(editTimeHours, editTimeMinutes, editTimeSeconds);
+      const isEventEntryTimeChanged = () => isTimeChanged(eventEntryTimeHours, eventEntryTimeMinutes, eventEntryTimeSeconds);
+      const isEditEventEntryTimeChanged = () => isTimeChanged(editEventEntryTimeHours, editEventEntryTimeMinutes, editEventEntryTimeSeconds);
+      
+      // Race timer input formatting - auto-advancing cursor behavior
+      const formatRaceTime = (value, currentValue = '00:00:00') => {
+        // Remove any non-numeric characters
+        let cleaned = value.replace(/[^\d]/g, '');
+        
+        // If input is empty, return default
+        if (cleaned === '') return '00:00:00';
+        
+        // Handle different input lengths with auto-advancing behavior
+        if (cleaned.length === 1) {
+          // Single digit: "1" -> "01:00:00"
+          return '0' + cleaned + ':00:00';
+        } else if (cleaned.length === 2) {
+          // Two digits: "12" -> "12:00:00"
+          return cleaned + ':00:00';
+        } else if (cleaned.length === 3) {
+          // Three digits: "123" -> "01:23:00"
+          return '0' + cleaned.slice(0, 1) + ':' + cleaned.slice(1, 3) + ':00';
+        } else if (cleaned.length === 4) {
+          // Four digits: "1234" -> "12:34:00"
+          return cleaned.slice(0, 2) + ':' + cleaned.slice(2, 4) + ':00';
+        } else if (cleaned.length === 5) {
+          // Five digits: "12345" -> "01:23:45"
+          return '0' + cleaned.slice(0, 1) + ':' + cleaned.slice(1, 3) + ':' + cleaned.slice(3, 5);
+        } else if (cleaned.length >= 6) {
+          // Six or more digits: "123456" -> "12:34:56"
+          return cleaned.slice(0, 2) + ':' + cleaned.slice(2, 4) + ':' + cleaned.slice(4, 6);
+        }
+        
+        return currentValue;
+      };
       const [entries, setEntries] = React.useState([]);
       const [uploadMsg, setUploadMsg] = React.useState('');
       const [file, setFile] = React.useState(null);
@@ -1252,12 +1993,17 @@
       const [editingEntry, setEditingEntry] = React.useState(null);
       const [editDate, setEditDate] = React.useState('');
       const [editKm, setEditKm] = React.useState('');
-      const [editHours, setEditHours] = React.useState('');
+      const [editHours, setEditHours] = React.useState('00:00:00');
+      const [editTimeHours, setEditTimeHours] = React.useState(0);
+      const [editTimeMinutes, setEditTimeMinutes] = React.useState(0);
+      const [editTimeSeconds, setEditTimeSeconds] = React.useState(0);
       const [editMsg, setEditMsg] = React.useState('');
       
       // Events state
       const [events, setEvents] = React.useState([]);
       const [eventsLoading, setEventsLoading] = React.useState(false);
+      const [userEventTab, setUserEventTab] = React.useState('active');
+      const [endedEvents, setEndedEvents] = React.useState([]);
       
       // Event entry modal state
       const [showEventEntryModal, setShowEventEntryModal] = React.useState(false);
@@ -1269,7 +2015,10 @@
         return phTime.toISOString().slice(0,10);
       });
       const [eventEntryKm, setEventEntryKm] = React.useState('');
-      const [eventEntryHours, setEventEntryHours] = React.useState('');
+      const [eventEntryHours, setEventEntryHours] = React.useState('00:00:00');
+      const [eventEntryTimeHours, setEventEntryTimeHours] = React.useState(0);
+      const [eventEntryTimeMinutes, setEventEntryTimeMinutes] = React.useState(0);
+      const [eventEntryTimeSeconds, setEventEntryTimeSeconds] = React.useState(0);
       const [eventEntryFile, setEventEntryFile] = React.useState(null);
       const [eventEntryMsg, setEventEntryMsg] = React.useState('');
       
@@ -1280,7 +2029,10 @@
       const [editingEventEntry, setEditingEventEntry] = React.useState(null);
       const [editEventEntryDate, setEditEventEntryDate] = React.useState('');
       const [editEventEntryKm, setEditEventEntryKm] = React.useState('');
-      const [editEventEntryHours, setEditEventEntryHours] = React.useState('');
+      const [editEventEntryHours, setEditEventEntryHours] = React.useState('00:00:00');
+      const [editEventEntryTimeHours, setEditEventEntryTimeHours] = React.useState(0);
+      const [editEventEntryTimeMinutes, setEditEventEntryTimeMinutes] = React.useState(0);
+      const [editEventEntryTimeSeconds, setEditEventEntryTimeSeconds] = React.useState(0);
       const [editEventEntryMsg, setEditEventEntryMsg] = React.useState('');
 
       const load = React.useCallback(() => {
@@ -1301,7 +2053,23 @@
           setEventsLoading(false);
         }
       }, [isAdmin]);
+      
+      const loadUserEndedEvents = React.useCallback(async () => {
+        try {
+          const res = await api('/api/events/ended');
+          setEndedEvents(res.events || []);
+        } catch (error) {
+          console.error('Failed to load ended events:', error);
+          setEndedEvents([]);
+        }
+      }, []);
+      
       React.useEffect(() => { loadEvents(); }, [loadEvents]);
+      React.useEffect(() => { 
+        if (!isAdmin) {
+          loadUserEndedEvents(); 
+        }
+      }, [loadUserEndedEvents, isAdmin]);
 
       const joinEvent = async (eventId) => {
         try {
@@ -1329,7 +2097,10 @@
         const phTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
         setEventEntryDate(phTime.toISOString().slice(0,10));
         setEventEntryKm('');
-        setEventEntryHours('');
+        setEventEntryHours('00:00:00');
+        setEventEntryTimeHours(0);
+        setEventEntryTimeMinutes(0);
+        setEventEntryTimeSeconds(0);
         setEventEntryFile(null);
         setEventEntryMsg('');
         setShowEventEntryModal(true);
@@ -1343,7 +2114,10 @@
         const phTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
         setEventEntryDate(phTime.toISOString().slice(0,10));
         setEventEntryKm('');
-        setEventEntryHours('');
+        setEventEntryHours('00:00:00');
+        setEventEntryTimeHours(0);
+        setEventEntryTimeMinutes(0);
+        setEventEntryTimeSeconds(0);
         setEventEntryFile(null);
         setEventEntryMsg('');
       };
@@ -1385,7 +2159,13 @@
           const ss = totalSeconds % 60;
           return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
         };
-        setEditEventEntryHours(formatHoursToTime(entry.hours));
+        const timeString = formatHoursToTime(entry.hours);
+        setEditEventEntryHours(timeString);
+        // Parse the time string to set dropdown values
+        const timeParts = timeString.split(':');
+        setEditEventEntryTimeHours(parseInt(timeParts[0]) || 0);
+        setEditEventEntryTimeMinutes(parseInt(timeParts[1]) || 0);
+        setEditEventEntryTimeSeconds(parseInt(timeParts[2]) || 0);
         setEditEventEntryMsg('');
       };
 
@@ -1393,12 +2173,33 @@
         setEditingEventEntry(null);
         setEditEventEntryDate('');
         setEditEventEntryKm('');
-        setEditEventEntryHours('');
+        setEditEventEntryHours('00:00:00');
+        setEditEventEntryTimeHours(0);
+        setEditEventEntryTimeMinutes(0);
+        setEditEventEntryTimeSeconds(0);
         setEditEventEntryMsg('');
+      };
+
+      // Test function to force show modal
+      const testModal = () => {
+        console.log('Testing modal...');
+        setMultipleEntriesData({
+          date: '2024-01-15',
+          user: { email: 'test@example.com' },
+          entries: [
+            { id: 1, km: 5, hours: 1, upload_id: null },
+            { id: 2, km: 7, hours: 1.5, upload_id: null }
+          ]
+        });
+        setShowMultipleEntriesModal(true);
       };
 
       const updateEventEntry = async (e) => {
         e.preventDefault();
+        
+        // For edit modals, we allow any time (including 0:0:0 if user wants to clear the time)
+        // No validation needed for edit modals
+        
         if (!confirm('Have you verified that the information you entered is accurate?')) return;
         
         const toHours = (t) => {
@@ -1457,6 +2258,13 @@
 
       const submitEventEntry = async (e) => {
         e.preventDefault();
+        
+        // Check if time has been changed from default
+        if (!isEventEntryTimeChanged()) {
+          setEventEntryMsg('Please select a time for your run');
+          return;
+        }
+        
         if (!eventEntryKm || !eventEntryHours || !eventEntryFile) {
           setEventEntryMsg('Please fill in all fields and select a screenshot');
           return;
@@ -1510,6 +2318,13 @@
 
       const submitEntry = async (e) => {
         e.preventDefault();
+        
+        // Check if time has been changed from default
+        if (!isMainTimeChanged()) {
+          setUploadMsg('Please select a time for your run');
+          return;
+        }
+        
         if (!confirm('Have you verified that the information you entered is accurate?')) return;
         const toHours = (t) => {
           if (t == null || t === '') return 0;
@@ -1535,7 +2350,16 @@
         form.append('file', file);
         const resp = await fetch('/api/entries', { method: 'POST', body: form, credentials: 'include' });
         const res = await resp.json();
-        if (res.ok) { setKm(''); setHours(''); setFile(null); setUploadMsg(''); load(); }
+        if (res.ok) { 
+          setKm(''); 
+          setHours('00:00:00'); 
+          setTimeHours(0);
+          setTimeMinutes(0);
+          setTimeSeconds(0);
+          setFile(null); 
+          setUploadMsg(''); 
+          load(); 
+        }
         else { setUploadMsg(res.error || 'Failed to save'); }
       };
 
@@ -1561,7 +2385,13 @@
           const ss = totalSeconds % 60;
           return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
         };
-        setEditHours(formatHoursToTime(entry.hours));
+        const timeString = formatHoursToTime(entry.hours);
+        setEditHours(timeString);
+        // Parse the time string to set dropdown values
+        const timeParts = timeString.split(':');
+        setEditTimeHours(parseInt(timeParts[0]) || 0);
+        setEditTimeMinutes(parseInt(timeParts[1]) || 0);
+        setEditTimeSeconds(parseInt(timeParts[2]) || 0);
         setEditMsg('');
       };
 
@@ -1569,12 +2399,19 @@
         setEditingEntry(null);
         setEditDate('');
         setEditKm('');
-        setEditHours('');
+        setEditHours('00:00:00');
+        setEditTimeHours(0);
+        setEditTimeMinutes(0);
+        setEditTimeSeconds(0);
         setEditMsg('');
       };
 
       const updateEntry = async (e) => {
         e.preventDefault();
+        
+        // For edit modals, we allow any time (including 0:0:0 if user wants to clear the time)
+        // No validation needed for edit modals
+        
         if (!confirm('Have you verified that the information you entered is accurate?')) return;
         
         const toHours = (t) => {
@@ -1660,8 +2497,53 @@
                   required 
                 />
                 <input type="number" step="0.01" className="border p-2 rounded" placeholder="Distance (km)" value={km} onChange={e => setKm(e.target.value)} required />
-                <input type="text" className="border p-2 rounded" placeholder="Time (HH:MM:SS or HH:MM or hours)" value={hours} onChange={e => setHours(e.target.value)} required />
-                <button className="bg-green-600 text-white rounded p-2">Save</button>
+                <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                  <div className="flex flex-col">
+                    <label className="block text-xs text-gray-600 mb-1 text-center">Hours</label>
+                    <select 
+                      value={timeHours} 
+                      onChange={e => handleTimeHoursChange(e.target.value)}
+                      className="w-full border p-2 sm:p-3 rounded text-center text-sm sm:text-base font-mono bg-white"
+                      required
+                    >
+                      {Array.from({length: 25}, (_, i) => (
+                        <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex flex-col">
+                    <label className="block text-xs text-gray-600 mb-1 text-center">Minutes</label>
+                    <select 
+                      value={timeMinutes} 
+                      onChange={e => handleTimeMinutesChange(e.target.value)}
+                      className="w-full border p-2 sm:p-3 rounded text-center text-sm sm:text-base font-mono bg-white"
+                      required
+                    >
+                      {Array.from({length: 60}, (_, i) => (
+                        <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex flex-col">
+                    <label className="block text-xs text-gray-600 mb-1 text-center">Seconds</label>
+                    <select 
+                      value={timeSeconds} 
+                      onChange={e => handleTimeSecondsChange(e.target.value)}
+                      className="w-full border p-2 sm:p-3 rounded text-center text-sm sm:text-base font-mono bg-white"
+                      required
+                    >
+                      {Array.from({length: 60}, (_, i) => (
+                        <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <button 
+                  className={`rounded p-2 ${isMainTimeChanged() ? 'bg-green-600 text-white' : 'bg-gray-400 text-gray-200 cursor-not-allowed'}`}
+                  disabled={!isMainTimeChanged()}
+                >
+                  Save
+                </button>
               </form>
               <div>
                 <label className="block text-sm font-medium mb-2">Upload screenshot (required)</label>
@@ -1700,12 +2582,40 @@
 
           {!isAdmin && (
             <div className="bg-white p-4 rounded shadow">
-              <h3 className="font-medium mb-4">Available Events</h3>
+              <h3 className="font-medium mb-4">Events</h3>
+              
+              {/* Tabs */}
+              <div className="flex border-b mb-4">
+                <button
+                  onClick={() => setUserEventTab('active')}
+                  className={`px-4 py-2 text-sm font-medium ${
+                    userEventTab === 'active'
+                      ? 'border-b-2 border-blue-500 text-blue-600'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Active Events
+                </button>
+                <button
+                  onClick={() => setUserEventTab('ended')}
+                  className={`px-4 py-2 text-sm font-medium ${
+                    userEventTab === 'ended'
+                      ? 'border-b-2 border-blue-500 text-blue-600'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Ended Events
+                </button>
+              </div>
+              
               {eventsLoading ? (
                 <div className="text-center py-4">Loading events...</div>
               ) : (
-                <div className="space-y-3">
-                  {events.map(event => {
+                <>
+                  {/* Active Events Tab */}
+                  {userEventTab === 'active' && (
+                    <div className="space-y-3">
+                      {events.filter(event => !event.is_ended).map(event => {
                     // Get current Philippine time (UTC+8)
                     const now = new Date();
                     const phTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
@@ -1729,24 +2639,11 @@
                               <span className="hidden sm:inline"> | </span>
                               <span className="block sm:inline">Goal: {event.km_goal} km</span>
                             </div>
-                            <div className="text-xs text-gray-500 mt-1">
-                              Created by: {event.created_by_email}
-                            </div>
                             {event.has_joined && (
                               <div className="mt-2 space-y-1">
                                 <div className="text-xs text-green-600 font-semibold">
                                   ✓ You have joined this event
                                 </div>
-                                {event.user_rank && event.total_participants > 0 && event.is_ended && (
-                                  <div className="space-y-1">
-                                    <div className="text-xs font-semibold" style={{color: event.user_rank === 1 ? '#FFD700' : event.user_rank === 2 ? '#C0C0C0' : event.user_rank === 3 ? '#CD7F32' : '#4B5563'}}>
-                                      {event.user_rank === 1 ? '🥇' : event.user_rank === 2 ? '🥈' : event.user_rank === 3 ? '🥉' : '📊'} You are ranked {event.user_rank}{event.user_rank === 1 ? 'st' : event.user_rank === 2 ? 'nd' : event.user_rank === 3 ? 'rd' : 'th'} out of {event.total_participants} participant{event.total_participants !== 1 ? 's' : ''}
-                                    </div>
-                                    <div className="text-xs text-gray-700 bg-gray-100 rounded px-2 py-1">
-                                      <strong>Your Stats:</strong> {event.user_total_km?.toFixed(2) || 0} km / {event.user_total_hours?.toFixed(2) || 0} hours / {event.user_total_days || 0} day{event.user_total_days !== 1 ? 's' : ''}
-                                    </div>
-                                  </div>
-                                )}
                               </div>
                             )}
                           </div>
@@ -1792,10 +2689,73 @@
                       </div>
                     );
                   })}
-                  {events.length === 0 && (
-                    <div className="text-gray-500 text-center py-4">No events available.</div>
+                      {events.filter(event => !event.is_ended).length === 0 && (
+                        <div className="text-gray-500 text-center py-4">No active events available.</div>
+                      )}
+                    </div>
                   )}
-                </div>
+                  
+                  {/* Ended Events Tab */}
+                  {userEventTab === 'ended' && (
+                    <div className="space-y-3">
+                      {endedEvents.map(event => {
+                        const now = new Date();
+                        const phTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+                        const today = phTime.toISOString().split('T')[0];
+                        const isEligible = event.gender_restriction === 'both' || event.gender_restriction === me?.gender;
+                        
+                        return (
+                          <div key={event.id} className={`border rounded p-3 sm:p-4 ${event.has_joined ? 'bg-green-50 border-green-200' : 'bg-gray-50'}`}>
+                            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="font-semibold text-sm sm:text-base">{event.name}</div>
+                                <div className="text-xs sm:text-sm text-gray-600 mt-1">
+                                  {event.start_date} to {event.end_date}
+                                </div>
+                                <div className="text-xs sm:text-sm text-gray-600 mt-1">
+                                  <span className="block sm:inline">Category: {event.category}</span>
+                                  <span className="hidden sm:inline"> | </span>
+                                  <span className="block sm:inline">Gender: {event.gender_restriction === 'both' ? 'All' : event.gender_restriction === 'male' ? 'Male only' : 'Female only'}</span>
+                                  <span className="hidden sm:inline"> | </span>
+                                  <span className="block sm:inline">Goal: {event.km_goal} km</span>
+                                </div>
+                                <div className="text-xs text-red-600 mt-1 font-semibold">
+                                  ✓ Event Ended
+                                </div>
+                                {event.has_joined && (
+                                  <div className="mt-2 space-y-1">
+                                    <div className="text-xs text-green-600 font-semibold">
+                                      ✓ You participated in this event
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex sm:flex-col gap-2 sm:ml-4 flex-shrink-0">
+                                {event.has_joined || isAdmin ? (
+                                  <button 
+                                    onClick={() => showRanking(event)}
+                                    className="w-full sm:w-auto text-xs sm:text-sm bg-purple-600 text-white px-3 py-2 rounded hover:bg-purple-700 whitespace-nowrap"
+                                  >
+                                    View Rankings
+                                  </button>
+                                ) : !isEligible ? (
+                                  <span className="text-xs sm:text-sm text-red-600 font-medium">
+                                    {event.gender_restriction === 'male' ? 'Male only' : 'Female only'}
+                                  </span>
+                                ) : (
+                                  <span className="text-xs sm:text-sm text-gray-500">You did not participate</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {endedEvents.length === 0 && (
+                        <div className="text-gray-500 text-center py-4">No ended events found.</div>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -1833,7 +2793,7 @@
                     <tr>
                       <th className="border px-2 py-1 text-left">Date</th>
                       <th className="border px-2 py-1 text-left">Distance (km)</th>
-                      <th className="border px-2 py-1 text-left">Time (HH:MM:SS)</th>
+                      <th className="border px-2 py-1 text-left">Moving time</th>
                       <th className="border px-2 py-1 text-left">Pace (min/km)</th>
                       <th className="border px-2 py-1 text-left">Screenshot</th>
                       <th className="border px-2 py-1 text-left">Actions</th>
@@ -1899,6 +2859,91 @@
             </div>
           )}
 
+          {/* Ranking Modal */}
+          {showRankingModal && selectedEvent && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white p-6 rounded-lg shadow-lg max-w-4xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold">Ranking - {selectedEvent.name}</h3>
+                  <button
+                    onClick={closeRankingModal}
+                    className="text-gray-500 hover:text-gray-700 text-xl"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="mb-4 p-3 bg-blue-50 rounded">
+                  <div className="text-sm text-blue-800">
+                    <strong>Event Goal:</strong> {eventGoal} km | 
+                    <strong> Period:</strong> {selectedEvent.start_date} to {selectedEvent.end_date}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {ranking.map((participant, index) => {
+                    const progress = eventGoal > 0 ? (participant.total_km / eventGoal * 100) : 0;
+                    const isGoalReached = participant.total_km >= eventGoal;
+                    return (
+                      <div key={participant.id} className={`border rounded p-3 ${isGoalReached ? 'bg-green-50 border-green-200' : 'bg-gray-50'}`}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-3">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold ${
+                              index === 0 ? 'bg-yellow-500' : 
+                              index === 1 ? 'bg-gray-400' : 
+                              index === 2 ? 'bg-orange-600' : 
+                              'bg-gray-300'
+                            }`}>
+                              {index + 1}
+                            </div>
+                            <div>
+                              <div className="font-semibold">{participant.email}</div>
+                              <div className="text-sm text-gray-600">
+                                {participant.entry_count} entries
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-bold text-lg">
+                              {Number(participant.total_km).toFixed(2)} km
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              {progress.toFixed(1)}% of goal
+                            </div>
+                            {isGoalReached && (
+                              <div className="text-xs text-green-600 font-semibold">
+                                🎯 Goal Reached!
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        {eventGoal > 0 && (
+                          <div className="mt-2">
+                            <div className="w-full bg-gray-200 rounded-full h-2">
+                              <div 
+                                className={`h-2 rounded-full ${isGoalReached ? 'bg-green-500' : 'bg-blue-500'}`}
+                                style={{ width: `${Math.min(progress, 100)}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {ranking.length === 0 && (
+                    <div className="text-gray-500 text-center py-8">No participants or no entries yet.</div>
+                  )}
+                </div>
+                <div className="flex justify-end mt-6">
+                  <button
+                    onClick={closeRankingModal}
+                    className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Edit Entry Modal */}
           {editingEntry && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -1928,15 +2973,48 @@
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium mb-1">Time (HH:MM:SS)</label>
-                      <input
-                        type="text"
-                        value={editHours}
-                        onChange={e => setEditHours(e.target.value)}
-                        placeholder="HH:MM:SS or HH:MM or hours"
-                        className="w-full border p-2 rounded"
-                        required
-                      />
+                      <label className="block text-sm font-medium mb-1">Moving time</label>
+                      <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                        <div className="flex flex-col">
+                          <label className="block text-xs text-gray-600 mb-1 text-center">Hours</label>
+                          <select 
+                            value={editTimeHours} 
+                            onChange={e => handleEditTimeHoursChange(e.target.value)}
+                            className="w-full border p-2 sm:p-3 rounded text-center text-sm sm:text-base font-mono bg-white"
+                            required
+                          >
+                            {Array.from({length: 25}, (_, i) => (
+                              <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="flex flex-col">
+                          <label className="block text-xs text-gray-600 mb-1 text-center">Minutes</label>
+                          <select 
+                            value={editTimeMinutes} 
+                            onChange={e => handleEditTimeMinutesChange(e.target.value)}
+                            className="w-full border p-2 sm:p-3 rounded text-center text-sm sm:text-base font-mono bg-white"
+                            required
+                          >
+                            {Array.from({length: 60}, (_, i) => (
+                              <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="flex flex-col">
+                          <label className="block text-xs text-gray-600 mb-1 text-center">Seconds</label>
+                          <select 
+                            value={editTimeSeconds} 
+                            onChange={e => handleEditTimeSecondsChange(e.target.value)}
+                            className="w-full border p-2 sm:p-3 rounded text-center text-sm sm:text-base font-mono bg-white"
+                            required
+                          >
+                            {Array.from({length: 60}, (_, i) => (
+                              <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
                     </div>
                     {editMsg && (
                       <div className="text-red-600 text-sm">{editMsg}</div>
@@ -2059,15 +3137,48 @@
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium mb-1">Time (HH:MM:SS)</label>
-                      <input
-                        type="text"
-                        value={editEventEntryHours}
-                        onChange={e => setEditEventEntryHours(e.target.value)}
-                        className="w-full border p-2 rounded"
-                        placeholder="HH:MM:SS or HH:MM or hours"
-                        required
-                      />
+                      <label className="block text-sm font-medium mb-1">Moving time</label>
+                      <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                        <div className="flex flex-col">
+                          <label className="block text-xs text-gray-600 mb-1 text-center">Hours</label>
+                          <select 
+                            value={editEventEntryTimeHours} 
+                            onChange={e => handleEditEventEntryTimeHoursChange(e.target.value)}
+                            className="w-full border p-2 sm:p-3 rounded text-center text-sm sm:text-base font-mono bg-white"
+                            required
+                          >
+                            {Array.from({length: 25}, (_, i) => (
+                              <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="flex flex-col">
+                          <label className="block text-xs text-gray-600 mb-1 text-center">Minutes</label>
+                          <select 
+                            value={editEventEntryTimeMinutes} 
+                            onChange={e => handleEditEventEntryTimeMinutesChange(e.target.value)}
+                            className="w-full border p-2 sm:p-3 rounded text-center text-sm sm:text-base font-mono bg-white"
+                            required
+                          >
+                            {Array.from({length: 60}, (_, i) => (
+                              <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="flex flex-col">
+                          <label className="block text-xs text-gray-600 mb-1 text-center">Seconds</label>
+                          <select 
+                            value={editEventEntryTimeSeconds} 
+                            onChange={e => handleEditEventEntryTimeSecondsChange(e.target.value)}
+                            className="w-full border p-2 sm:p-3 rounded text-center text-sm sm:text-base font-mono bg-white"
+                            required
+                          >
+                            {Array.from({length: 60}, (_, i) => (
+                              <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
                     </div>
                     {editEventEntryMsg && (
                       <div className="text-red-600 text-sm">{editEventEntryMsg}</div>
@@ -2129,15 +3240,48 @@
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium mb-1">Time (HH:MM:SS)</label>
-                      <input
-                        type="text"
-                        value={eventEntryHours}
-                        onChange={e => setEventEntryHours(e.target.value)}
-                        className="w-full border p-2 rounded"
-                        placeholder="HH:MM:SS or HH:MM or hours"
-                        required
-                      />
+                      <label className="block text-sm font-medium mb-1">Moving time</label>
+                      <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                        <div className="flex flex-col">
+                          <label className="block text-xs text-gray-600 mb-1 text-center">Hours</label>
+                          <select 
+                            value={eventEntryTimeHours} 
+                            onChange={e => handleEventEntryTimeHoursChange(e.target.value)}
+                            className="w-full border p-2 sm:p-3 rounded text-center text-sm sm:text-base font-mono bg-white"
+                            required
+                          >
+                            {Array.from({length: 25}, (_, i) => (
+                              <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="flex flex-col">
+                          <label className="block text-xs text-gray-600 mb-1 text-center">Minutes</label>
+                          <select 
+                            value={eventEntryTimeMinutes} 
+                            onChange={e => handleEventEntryTimeMinutesChange(e.target.value)}
+                            className="w-full border p-2 sm:p-3 rounded text-center text-sm sm:text-base font-mono bg-white"
+                            required
+                          >
+                            {Array.from({length: 60}, (_, i) => (
+                              <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="flex flex-col">
+                          <label className="block text-xs text-gray-600 mb-1 text-center">Seconds</label>
+                          <select 
+                            value={eventEntryTimeSeconds} 
+                            onChange={e => handleEventEntryTimeSecondsChange(e.target.value)}
+                            className="w-full border p-2 sm:p-3 rounded text-center text-sm sm:text-base font-mono bg-white"
+                            required
+                          >
+                            {Array.from({length: 60}, (_, i) => (
+                              <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
                     </div>
                     <div>
                       <label className="block text-sm font-medium mb-1">Screenshot (required)</label>
@@ -2168,7 +3312,8 @@
                     </button>
                     <button
                       type="submit"
-                      className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+                      className={`px-4 py-2 rounded ${isEventEntryTimeChanged() ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-gray-400 text-gray-200 cursor-not-allowed'}`}
+                      disabled={!isEventEntryTimeChanged()}
                     >
                       Submit Entry
                     </button>
