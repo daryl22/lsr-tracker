@@ -5,7 +5,8 @@ import session from 'express-session';
 import SQLiteStoreFactory from 'connect-sqlite3';
 import dotenv from 'dotenv';
 
-import { ensureDatabase } from './db.js';
+import { ensureDatabase as ensureSQLiteDatabase } from './db.js';
+import { ensureDatabase as ensurePostgreSQLDatabase } from './db-postgresql.js';
 import cors from 'cors';
 import authRouter from './routes/auth.js';
 import mainRouter from './routes/index.js';
@@ -18,7 +19,20 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const SQLiteStore = SQLiteStoreFactory(session);
 
-ensureDatabase();
+// Initialize database based on environment
+const isStaging = process.env.NODE_ENV === 'staging';
+const isProduction = process.env.NODE_ENV === 'production';
+
+if (isStaging || isProduction) {
+  console.log('🐘 Using PostgreSQL database');
+  ensurePostgreSQLDatabase().catch(error => {
+    console.error('❌ PostgreSQL initialization failed:', error);
+    process.exit(1);
+  });
+} else {
+  console.log('📊 Using SQLite database');
+  ensureSQLiteDatabase();
+}
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, '..', 'views'));
